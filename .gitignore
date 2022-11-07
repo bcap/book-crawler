@@ -1,2 +1,4 @@
 *.json
 *.log
+graph.dot
+graph.svg

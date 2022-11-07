@@ -2,10 +2,11 @@ build:
 	docker build -t book-crawler:latest .
 
 run: build
-	docker run --rm -i book-crawler:latest > graph.dot
+	docker run --rm -i book-crawler:latest
 
-show:
-	./dot-to-svg.sh && open graph.svg
+run-graph: build
+	docker run --rm -i book-crawler:latest | tee graph.dot && ./dot-to-svg.sh && open graph.svg
 
-run-show: run show
+shell: build
+	docker run --rm -it --entrypoint /bin/bash book-crawler:latest
 
