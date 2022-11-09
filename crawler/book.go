@@ -23,8 +23,7 @@ type Book struct {
 	Reviews int32
 	URL     string
 
-	AlsoRead  []*Book
-	alsoReadP []**Book
+	AlsoRead []*Book
 }
 
 func (b *Book) String() string {
@@ -90,43 +89,6 @@ func extractNumReviews(doc *goquery.Document) int32 {
 		return -1
 	}
 	return int32(reviews)
-}
-
-func dereferenceBook(bookP **Book) *Book {
-	visited := make(map[*Book]struct{})
-
-	var recurse func(bookP **Book)
-	recurse = func(bookP **Book) {
-		if bookP == nil {
-			return
-		}
-
-		book := *bookP
-
-		if book == nil {
-			return
-		}
-
-		visited[book] = struct{}{}
-
-		if book.alsoReadP == nil {
-			book.AlsoRead = []*Book{}
-			return
-		}
-
-		book.AlsoRead = make([]*Book, 0, len(book.alsoReadP))
-		for _, alsoReadBookP := range book.alsoReadP {
-			alsoReadBook := *alsoReadBookP
-			book.AlsoRead = append(book.AlsoRead, alsoReadBook)
-			if _, alreadyVisited := visited[alsoReadBook]; !alreadyVisited {
-				recurse(alsoReadBookP)
-			}
-		}
-		book.alsoReadP = nil
-	}
-
-	recurse(bookP)
-	return *bookP
 }
 
 func collectBooks(root *Book) []*Book {

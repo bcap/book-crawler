@@ -16,7 +16,7 @@ type Crawler struct {
 
 	maxDepth             int
 	maxReadAlso          int
-	crawledBookSet       map[string]**Book
+	crawledBookSet       map[string]*Book
 	crawledBooksSetMutex sync.RWMutex
 }
 
@@ -38,7 +38,7 @@ func NewCrawler(options ...CrawlerOption) *Crawler {
 	crawler := &Crawler{
 		maxDepth:       3,
 		maxReadAlso:    5,
-		crawledBookSet: make(map[string]**Book),
+		crawledBookSet: make(map[string]*Book),
 	}
 	for _, option := range options {
 		option(crawler)
@@ -48,11 +48,10 @@ func NewCrawler(options ...CrawlerOption) *Crawler {
 
 func (c *Crawler) Crawl(ctx context.Context, url string) (BookGraph, error) {
 	log.Infof("Crawling up to depth %d and following up to %d book recommendations per book", c.maxDepth, c.maxReadAlso)
-	bookP, err := c.crawl(ctx, url, 0, 0)
+	book, err := c.crawl(ctx, url, 0, 0)
 	if err != nil {
 		return BookGraph{}, err
 	}
-	book := dereferenceBook(bookP)
 	return BookGraph{
 		Root:    book,
 		All:     collectBooks(book),
@@ -60,18 +59,20 @@ func (c *Crawler) Crawl(ctx context.Context, url string) (BookGraph, error) {
 	}, nil
 }
 
-func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) (**Book, error) {
+func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) (*Book, error) {
 	if depth > c.maxDepth {
 		return nil, nil
 	}
 
-	logAlreadyCrawled := func() { log.Infof("(%02d/%02d) already crawled, skipping (%s)", depth, index, url) }
+	logAlreadyCrawled := func() {
+		log.Infof("(%02d/%02d) book already crawled or being crawled, skipping (%s)", depth, index, url)
+	}
 
 	c.crawledBooksSetMutex.RLock()
-	if bookP, visited := c.crawledBookSet[url]; visited {
+	if book, visited := c.crawledBookSet[url]; visited {
 		c.crawledBooksSetMutex.RUnlock()
 		logAlreadyCrawled()
-		return bookP, nil
+		return book, nil
 	}
 	c.crawledBooksSetMutex.RUnlock()
 
@@ -87,9 +88,8 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) (
 	book := Book{
 		URL: url,
 	}
-	bookP := &book
 
-	c.crawledBookSet[url] = &bookP
+	c.crawledBookSet[url] = &book
 	c.crawledBooksSetMutex.Unlock()
 
 	res, err := request(ctx, c.client, "GET", url, nil)
@@ -113,26 +113,26 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) (
 
 	alsoReadLink, hasAlsoReadLink := doc.Find("a.actionLink.seeMoreLink").Attr("href")
 	if !hasAlsoReadLink {
-		return &bookP, err
+		return &book, err
 	}
 
 	alsoReadLink, err = absoluteURL(url, alsoReadLink)
 	if err != nil {
-		return &bookP, err
+		return &book, err
 	}
 
 	if depth < c.maxDepth {
 		alsoRead, err := c.fetchAlsoRead(ctx, alsoReadLink, depth)
 		if err != nil {
-			return &bookP, err
+			return &book, err
 		}
-		book.alsoReadP = alsoRead
+		book.AlsoRead = alsoRead
 	}
 
-	return &bookP, nil
+	return &book, nil
 }
 
-func (c *Crawler) fetchAlsoRead(ctx context.Context, url string, depth int) ([]**Book, error) {
+func (c *Crawler) fetchAlsoRead(ctx context.Context, url string, depth int) ([]*Book, error) {
 	resp, err := request(ctx, c.client, "GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -153,7 +153,7 @@ func (c *Crawler) fetchAlsoRead(ctx context.Context, url string, depth int) ([]*
 			}
 		})
 
-	results := []**Book{}
+	results := []*Book{}
 	for _, linkURL := range urls {
 		if len(results) == c.maxReadAlso {
 			break
@@ -168,14 +168,6 @@ func (c *Crawler) fetchAlsoRead(ctx context.Context, url string, depth int) ([]*
 			continue
 		}
 
-		// c.crawledBooksSetMutex.RLock()
-		// if fetchedBook := c.crawledBookSet[linkURL]; fetchedBook != nil {
-		// 	results = append(results, fetchedBook)
-		// 	c.crawledBooksSetMutex.RUnlock()
-		// 	continue
-		// }
-		// c.crawledBooksSetMutex.RUnlock()
-
 		book, err := c.crawl(ctx, linkURL, depth+1, len(results))
 		if err != nil {
 			return nil, err
@@ -186,12 +178,4 @@ func (c *Crawler) fetchAlsoRead(ctx context.Context, url string, depth int) ([]*
 	}
 
 	return results, err
-}
-
-func indent(symbol string, times int) string {
-	builder := strings.Builder{}
-	for i := 0; i < times; i++ {
-		builder.WriteString(symbol)
-	}
-	return builder.String()
 }
