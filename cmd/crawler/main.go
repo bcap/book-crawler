@@ -18,7 +18,11 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	crawler := crawler.NewCrawler(crawler.WithMaxDepth(6), crawler.WithMaxReadAlso(5))
+	crawler := crawler.NewCrawler(
+		crawler.WithMaxDepth(10),
+		crawler.WithMaxReadAlso(5),
+		crawler.WithMaxParallelism(5),
+	)
 	bookGraph, err := crawler.Crawl(ctx, rootBook)
 	if err != nil {
 		panic(err)

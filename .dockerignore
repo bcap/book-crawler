@@ -1,9 +1,9 @@
 .*
 *.json
 *.log
+*.dot
+*.svg
 
-graph.dot
-graph.svg
 dot-to-svg.sh
 Dockerfile
 README.md

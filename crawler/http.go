@@ -9,9 +9,10 @@ import (
 	urllib "net/url"
 
 	"github.com/bcap/book-crawler/log"
+	"golang.org/x/sync/semaphore"
 )
 
-func request(ctx context.Context, client http.Client, method string, url string, body io.Reader) (*http.Response, error) {
+func request(ctx context.Context, client http.Client, method string, url string, body io.Reader, semaphore *semaphore.Weighted) (*http.Response, error) {
 	var res *http.Response
 	for {
 		req, err := http.NewRequest(method, url, body)
@@ -19,7 +20,15 @@ func request(ctx context.Context, client http.Client, method string, url string,
 			log.Warnf("%s %s failed with error: %v", method, url, err)
 			return nil, err
 		}
+
+		if semaphore != nil {
+			semaphore.Acquire(ctx, 1)
+		}
 		res, err = client.Do(req)
+		if semaphore != nil {
+			semaphore.Release(1)
+		}
+
 		if err != nil {
 			log.Warnf("%s %s failed with error: %v", method, url, err)
 			return nil, err

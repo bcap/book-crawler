@@ -1,4 +1,4 @@
 *.json
 *.log
-graph.dot
-graph.svg
+*.dot
+*.svg
