@@ -3,25 +3,37 @@ package crawler
 import (
 	"context"
 	"fmt"
-	"net/http"
+	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	myhttp "github.com/bcap/book-crawler/http"
 	"github.com/bcap/book-crawler/log"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 )
 
-type Crawler struct {
-	client http.Client
+var extraStatusCodesToRetry = []int{
+	403, // sometimes goodreads returns 403 (Forbidden), but we should retry on it
+}
 
-	maxDepth             int
-	maxReadAlso          int
+type Crawler struct {
+	client *myhttp.Client
+
+	maxDepth    int
+	maxReadAlso int
+
+	currentProgress *int64
+	progressTotal   int64
+
+	crawled              *int32
 	crawledBookSet       map[string]*Book
 	crawledBooksSetMutex sync.RWMutex
-	maxParallelism       int
-	parallelismSem       *semaphore.Weighted
+
+	maxParallelism int
 }
 
 type CrawlerOption = func(*Crawler)
@@ -41,33 +53,61 @@ func WithMaxReadAlso(maxReadAlso int) CrawlerOption {
 func WithMaxParallelism(maxParallelism int) CrawlerOption {
 	return func(c *Crawler) {
 		c.maxParallelism = maxParallelism
-		c.parallelismSem = semaphore.NewWeighted(int64(maxParallelism))
+		c.client.ParallelismSem = semaphore.NewWeighted(int64(maxParallelism))
+	}
+}
+
+func WithRequestMaxRetries(maxRetries int) CrawlerOption {
+	return func(c *Crawler) {
+		c.client.RetryMax(maxRetries)
+	}
+}
+
+func WithRequestMaxRetryWait(maxWait time.Duration) CrawlerOption {
+	return func(c *Crawler) {
+		c.client.RetryWaitMax(maxWait)
+	}
+}
+
+func WithRequestMinRetryWait(minWait time.Duration) CrawlerOption {
+	return func(c *Crawler) {
+		c.client.RetryWaitMin(minWait)
 	}
 }
 
 func NewCrawler(options ...CrawlerOption) *Crawler {
+	var currentProgress int64
+	var crawled int32
 	crawler := &Crawler{
-		maxDepth:       3,
-		maxReadAlso:    5,
-		maxParallelism: 1,
-		parallelismSem: semaphore.NewWeighted(1),
-		crawledBookSet: make(map[string]*Book),
+		client:          myhttp.NewClient(semaphore.NewWeighted(1), extraStatusCodesToRetry),
+		maxDepth:        3,
+		maxReadAlso:     5,
+		currentProgress: &currentProgress,
+		crawled:         &crawled,
+		maxParallelism:  1,
+		crawledBookSet:  make(map[string]*Book),
 	}
 	for _, option := range options {
 		option(crawler)
 	}
+	crawler.progressTotal = calcProgressTotal(crawler.maxDepth, crawler.maxReadAlso)
 	return crawler
 }
 
 func (c *Crawler) Crawl(ctx context.Context, url string) (BookGraph, error) {
 	log.Infof(
-		"Crawling up at most %d books in parallel, up to depth %d and following up to %d book recommendations per book",
-		c.maxParallelism, c.maxDepth, c.maxReadAlso,
+		"Crawling up at most %d books in parallel, up to depth %d and following up to %d book recommendations per book. This run will potentially execute %d book checks",
+		c.maxParallelism, c.maxDepth, c.maxReadAlso, c.progressTotal,
 	)
 	book, err := c.crawl(ctx, url, 0, 0)
 	if err != nil {
 		return BookGraph{}, err
 	}
+
+	log.Infof(
+		"Crawled %d books with %d checks. %d checks avoided",
+		*c.crawled, *c.currentProgress, c.progressTotal-*c.currentProgress,
+	)
 	return BookGraph{
 		Root:    book,
 		All:     collectBooks(book),
@@ -80,8 +120,11 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) (
 		return nil, nil
 	}
 
+	progress := atomic.AddInt64(c.currentProgress, 1)
+	progressPct := float32(progress) / float32(c.progressTotal) * 100
+
 	logAlreadyCrawled := func() {
-		log.Debugf("(%02d/%02d) book already crawled or being crawled, skipping (%s)", depth, index, url)
+		log.Debugf("[%02.1f%%, %02d/%02d] book already crawled or being crawled, skipping (%s)", progressPct, depth, index, url)
 	}
 
 	c.crawledBooksSetMutex.RLock()
@@ -108,7 +151,7 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) (
 	c.crawledBookSet[url] = &book
 	c.crawledBooksSetMutex.Unlock()
 
-	res, err := request(ctx, c.client, "GET", url, nil, c.parallelismSem)
+	res, err := c.client.Request(ctx, "GET", url, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -123,16 +166,20 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) (
 		return nil, err
 	}
 
+	crawled := atomic.AddInt32(c.crawled, 1)
 	buildBook(&book, doc)
 
-	log.Infof("(%02d/%02d) crawled book %s by %s (%s)", depth, index, book.Title, book.Author, url)
+	log.Infof(
+		"[%03d, %02.1f%%, %02d/%02d] crawled book %s by %s (%s)",
+		crawled, progressPct, depth, index, book.Title, book.Author, url,
+	)
 
 	alsoReadLink, hasAlsoReadLink := doc.Find("a.actionLink.seeMoreLink").Attr("href")
 	if !hasAlsoReadLink {
 		return &book, err
 	}
 
-	alsoReadLink, err = absoluteURL(url, alsoReadLink)
+	alsoReadLink, err = myhttp.AbsoluteURL(url, alsoReadLink)
 	if err != nil {
 		return &book, err
 	}
@@ -176,7 +223,7 @@ func (c *Crawler) fetchAlsoRead(ctx context.Context, url string, depth int) ([]*
 }
 
 func (c *Crawler) extractRelatedBookURLs(ctx context.Context, url string) ([]string, error) {
-	resp, err := request(ctx, c.client, "GET", url, nil, c.parallelismSem)
+	resp, err := c.client.Request(ctx, "GET", url, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +245,7 @@ func (c *Crawler) extractRelatedBookURLs(ctx context.Context, url string) ([]str
 			if !hasUrl {
 				return
 			}
-			absoluteLinkURL, err := absoluteURL(url, linkURL)
+			absoluteLinkURL, err := myhttp.AbsoluteURL(url, linkURL)
 			if err != nil {
 				log.Warnf("found bad url, skipping it: %s", linkURL)
 				return
@@ -210,4 +257,14 @@ func (c *Crawler) extractRelatedBookURLs(ctx context.Context, url string) ([]str
 		})
 
 	return urls, nil
+}
+
+func calcProgressTotal(depth int, readAlso int) int64 {
+	// this is basically the size of a complete tree
+	// readAlso^0 + readAlso^1 + readAlso^2 + ... + readAlso^depth
+	var result int64 = 1
+	for i := 1; i <= depth; i++ {
+		result += int64(math.Pow(float64(readAlso), float64(i)))
+	}
+	return result
 }

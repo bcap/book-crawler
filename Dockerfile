@@ -29,4 +29,4 @@ WORKDIR /app
 
 COPY --from=build /app/bin/crawler .
 
-ENTRYPOINT /app/crawler
+ENTRYPOINT ["/app/crawler"]

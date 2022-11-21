@@ -2,3 +2,5 @@
 *.log
 *.dot
 *.svg
+
+.DS_Store
