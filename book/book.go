@@ -1,4 +1,4 @@
-package crawler
+package book
 
 import (
 	"fmt"
@@ -7,9 +7,11 @@ import (
 	"strings"
 
 	"github.com/PuerkitoBio/goquery"
+
+	"github.com/bcap/book-crawler/html"
 )
 
-type BookGraph struct {
+type Graph struct {
 	Root    *Book
 	All     []*Book
 	ByDepth [][]*Book
@@ -26,11 +28,18 @@ type Book struct {
 	AlsoRead []*Book
 }
 
+func New(url string, alsoReadCapacity int) *Book {
+	return &Book{
+		URL:      url,
+		AlsoRead: make([]*Book, 0, alsoReadCapacity),
+	}
+}
+
 func (b *Book) String() string {
 	return fmt.Sprintf("%s by %s", b.Title, b.Author)
 }
 
-func buildBook(book *Book, doc *goquery.Document) {
+func Build(book *Book, doc *goquery.Document) {
 	book.Title = extractTitle(doc)
 	book.Author = extractAuthor(doc)
 	book.Rating = extractRating(doc)
@@ -43,7 +52,7 @@ func extractTitle(doc *goquery.Document) string {
 	if selection.Length() == 0 {
 		return ""
 	}
-	return cleanHTMLText(selection.Eq(0).Text())
+	return html.CleanText(selection.Eq(0).Text())
 }
 
 func extractAuthor(doc *goquery.Document) string {
@@ -51,7 +60,7 @@ func extractAuthor(doc *goquery.Document) string {
 	if selection.Length() == 0 {
 		return ""
 	}
-	return cleanHTMLText(selection.Eq(0).Text())
+	return html.CleanText(selection.Eq(0).Text())
 }
 
 func extractRating(doc *goquery.Document) int32 {
@@ -59,7 +68,7 @@ func extractRating(doc *goquery.Document) int32 {
 	if selection.Length() == 0 {
 		return -1
 	}
-	ratingStr := cleanHTMLText(selection.Eq(0).Text())
+	ratingStr := html.CleanText(selection.Eq(0).Text())
 	ratingFloat64, err := strconv.ParseFloat(ratingStr, 64)
 	if err != nil {
 		return -1
@@ -91,7 +100,7 @@ func extractNumReviews(doc *goquery.Document) int32 {
 	return int32(reviews)
 }
 
-func collectBooks(root *Book) []*Book {
+func Collect(root *Book) []*Book {
 	bookMap := make(map[*Book]struct{})
 	var recurse func(*Book)
 	recurse = func(book *Book) {
@@ -119,7 +128,7 @@ func collectBooks(root *Book) []*Book {
 	return books
 }
 
-func collectBooksByDepth(root *Book) [][]*Book {
+func CollectByDepth(root *Book) [][]*Book {
 	depthMap := map[*Book]int{}
 	maxDepth := 0
 	maxDepthP := &maxDepth

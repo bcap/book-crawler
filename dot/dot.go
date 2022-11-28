@@ -6,12 +6,12 @@ import (
 	"math"
 	"strings"
 
-	"github.com/bcap/book-crawler/crawler"
+	"github.com/bcap/book-crawler/book"
 )
 
-type recurseFn = func(visited map[*crawler.Book]struct{}, book *crawler.Book, depth int)
+type recurseFn = func(visited map[*book.Book]struct{}, book *book.Book, depth int)
 
-func PrintBookGraph(graph crawler.BookGraph, writer io.Writer) {
+func PrintBookGraph(graph book.Graph, writer io.Writer) {
 	// analysis := analyzeGraph(graph)
 
 	genNodes := func() {
@@ -52,7 +52,7 @@ func PrintBookGraph(graph crawler.BookGraph, writer io.Writer) {
 	}
 
 	var genEdges recurseFn
-	genEdges = func(visited map[*crawler.Book]struct{}, book *crawler.Book, depth int) {
+	genEdges = func(visited map[*book.Book]struct{}, book *book.Book, depth int) {
 		visited[book] = struct{}{}
 		for idx, relatedBook := range book.AlsoRead {
 			label := fmt.Sprintf("idx:%d", idx)
@@ -78,7 +78,7 @@ func PrintBookGraph(graph crawler.BookGraph, writer io.Writer) {
 	genRanks()
 
 	fmt.Fprint(writer, "\n// edges\n")
-	genEdges(map[*crawler.Book]struct{}{}, graph.Root, 0)
+	genEdges(map[*book.Book]struct{}{}, graph.Root, 0)
 
 	fmt.Fprint(writer, "\n}\n")
 }
@@ -89,22 +89,22 @@ type analysis struct {
 	minRatings int32
 	maxRatings int32
 
-	booksByDepth [][]*crawler.Book
+	booksByDepth [][]*book.Book
 }
 
-func analyzeGraph(graph crawler.BookGraph) analysis {
+func analyzeGraph(graph book.Graph) analysis {
 	result := analysis{
 		minReviews:   math.MaxInt32,
 		minRatings:   math.MaxInt32,
 		maxReviews:   0,
 		maxRatings:   0,
-		booksByDepth: [][]*crawler.Book{},
+		booksByDepth: [][]*book.Book{},
 	}
 	processMinMax(graph, &result)
 	return result
 }
 
-func processMinMax(graph crawler.BookGraph, result *analysis) {
+func processMinMax(graph book.Graph, result *analysis) {
 	for _, book := range graph.All {
 		if result.minReviews > book.Reviews {
 			result.minReviews = book.Reviews

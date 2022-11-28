@@ -1,0 +1,44 @@
+package storage
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/bcap/book-crawler/book"
+)
+
+type State int32
+
+const (
+	NotCrawled   State = 0
+	BeingCrawled State = 1
+	Crawled      State = 2
+)
+
+type url = string
+
+type Storage interface {
+	Initialize(ctx context.Context) error
+	Shutdown(ctx context.Context) error
+
+	// State manipulation is a CAS operation (Compare And Swap)
+	GetBookState(ctx context.Context, url url) (State, error)
+	SetBookState(ctx context.Context, url url, previous State, new State) (bool, error)
+
+	GetBook(ctx context.Context, url url) (*book.Book, error)
+	SetBook(ctx context.Context, url url, book *book.Book) error
+	LinkBooks(ctx context.Context, url url, bookUrls ...url) error
+
+	BookGraph(ctx context.Context, root *book.Book, maxDepth int) (book.Graph, error)
+}
+
+type ErrBookNotFound struct {
+	URL string
+}
+
+func (e ErrBookNotFound) Error() string {
+	if e.URL != "" {
+		return fmt.Sprintf("book not found: %s", e.URL)
+	}
+	return "book not found"
+}
