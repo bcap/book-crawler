@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"sync/atomic"
 
@@ -24,8 +23,8 @@ var extraStatusCodesToRetry = []int{
 
 func (c *Crawler) Crawl(ctx context.Context, url string) error {
 	log.Infof(
-		"Crawling up at most %d books in parallel, up to depth %d and following up to %d book recommendations per book. This run will potentially execute %d book checks",
-		c.maxParallelism, c.maxDepth, c.maxReadAlso, c.progressTotal,
+		"Crawling up at most %d books in parallel, up to depth %d and following up to %d book recommendations per book",
+		c.maxParallelism, c.maxDepth, c.maxReadAlso,
 	)
 
 	err := c.crawl(ctx, url, 0, 0)
@@ -33,10 +32,7 @@ func (c *Crawler) Crawl(ctx context.Context, url string) error {
 		return err
 	}
 
-	log.Infof(
-		"Crawled %d books with %d checks. %d checks avoided",
-		*c.crawled, *c.currentProgress, c.progressTotal-*c.currentProgress,
-	)
+	log.Infof("Crawled %d books with %d checks", *c.crawled, *c.checked)
 	return nil
 }
 
@@ -45,16 +41,17 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 		return nil
 	}
 
-	progress := atomic.AddInt64(c.currentProgress, 1)
-	progressPct := float32(progress) / float32(c.progressTotal) * 100
+	checked := atomic.AddInt32(c.checked, 1)
 
 	state, err := c.Storage.GetBookState(ctx, url)
 	if err != nil {
 		return err
 	}
+
 	if state == storage.BeingCrawled {
 		return nil
 	}
+
 	if state == storage.Linked {
 		b, err := c.Storage.GetBook(ctx, url, 1)
 		if err != nil {
@@ -74,7 +71,10 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 	if set, err := c.Storage.SetBookState(ctx, url, storage.NotCrawled, storage.BeingCrawled); err != nil {
 		return err
 	} else if !set {
-		log.Debugf("[%02.1f%%, %02d/%02d] book already being crawled by some other goroutine, skipping (%s)", progressPct, depth, index, url)
+		log.Debugf(
+			"[%03d %02d/%02d] book already being crawled by some other goroutine, skipping (%s)",
+			checked, depth, index, url,
+		)
 		return nil
 	}
 
@@ -120,8 +120,8 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 	}
 
 	log.Infof(
-		"[%03d, %02.1f%%, %02d/%02d] crawled book %s by %s (%s)",
-		crawled, progressPct, depth, index, b.Title, b.Author, url,
+		"[%03d, %03d, %02d/%02d] crawled book %s by %s (%s)",
+		checked, crawled, depth, index, b.Title, b.Author, url,
 	)
 	log.Debugf("crawled book: %s", spew.Sdump(b))
 
@@ -219,14 +219,4 @@ func (c *Crawler) extractRelatedBookURLs(ctx context.Context, url string) ([]str
 		})
 
 	return urls, nil
-}
-
-func calcProgressTotal(depth int, readAlso int) int64 {
-	// this is basically the size of a complete tree
-	// readAlso^0 + readAlso^1 + readAlso^2 + ... + readAlso^depth
-	var result int64 = 1
-	for i := 1; i <= depth; i++ {
-		result += int64(math.Pow(float64(readAlso), float64(i)))
-	}
-	return result
 }

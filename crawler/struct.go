@@ -25,33 +25,31 @@ type Crawler struct {
 
 	maxParallelism int
 
-	currentProgress *int64
-	progressTotal   int64
-	crawled         *int32
+	crawled *int32
+	checked *int32
 }
 
 func NewCrawler(options ...CrawlerOption) *Crawler {
-	var currentProgress int64
 	var crawled int32
+	var checked int32
 	var inMemoryStorage = &memory.Storage{}
 	inMemoryStorage.Initialize(context.Background())
 	crawler := &Crawler{
-		Client:          myhttp.NewClient(semaphore.NewWeighted(1), extraStatusCodesToRetry),
-		Storage:         inMemoryStorage,
-		maxDepth:        3,
-		maxReadAlso:     5,
-		minNumRatings:   -1,
-		maxNumRatings:   -1,
-		minRating:       -1,
-		maxRating:       -1,
-		currentProgress: &currentProgress,
-		crawled:         &crawled,
-		maxParallelism:  1,
+		Client:         myhttp.NewClient(semaphore.NewWeighted(1), extraStatusCodesToRetry),
+		Storage:        inMemoryStorage,
+		maxDepth:       3,
+		maxReadAlso:    5,
+		minNumRatings:  -1,
+		maxNumRatings:  -1,
+		minRating:      -1,
+		maxRating:      -1,
+		crawled:        &crawled,
+		checked:        &checked,
+		maxParallelism: 1,
 	}
 	for _, option := range options {
 		option(crawler)
 	}
-	crawler.progressTotal = calcProgressTotal(crawler.maxDepth, crawler.maxReadAlso)
 	return crawler
 }
 
