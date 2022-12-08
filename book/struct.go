@@ -15,8 +15,10 @@ func NewGraph(root *Book) Graph {
 }
 
 type Book struct {
-	Title  string
-	Author string
+	Title string
+
+	Author    string
+	AuthorURL string
 
 	Rating       float32
 	RatingsTotal int32
@@ -27,7 +29,8 @@ type Book struct {
 	Ratings5     int32
 
 	Reviews int32
-	URL     string
+
+	URL string
 
 	AlsoRead []*Book
 }

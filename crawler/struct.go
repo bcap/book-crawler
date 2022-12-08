@@ -1,10 +1,59 @@
 package crawler
 
 import (
+	"context"
 	"time"
 
 	"golang.org/x/sync/semaphore"
+
+	myhttp "github.com/bcap/book-crawler/http"
+	"github.com/bcap/book-crawler/storage"
+	"github.com/bcap/book-crawler/storage/memory"
 )
+
+type Crawler struct {
+	Client  *myhttp.Client
+	Storage storage.Storage
+
+	maxDepth    int
+	maxReadAlso int
+
+	minNumRatings int32
+	maxNumRatings int32
+	minRating     float32
+	maxRating     float32
+
+	maxParallelism int
+
+	currentProgress *int64
+	progressTotal   int64
+	crawled         *int32
+}
+
+func NewCrawler(options ...CrawlerOption) *Crawler {
+	var currentProgress int64
+	var crawled int32
+	var inMemoryStorage = &memory.Storage{}
+	inMemoryStorage.Initialize(context.Background())
+	crawler := &Crawler{
+		Client:          myhttp.NewClient(semaphore.NewWeighted(1), extraStatusCodesToRetry),
+		Storage:         inMemoryStorage,
+		maxDepth:        3,
+		maxReadAlso:     5,
+		minNumRatings:   -1,
+		maxNumRatings:   -1,
+		minRating:       -1,
+		maxRating:       -1,
+		currentProgress: &currentProgress,
+		crawled:         &crawled,
+		maxParallelism:  1,
+	}
+	for _, option := range options {
+		option(crawler)
+	}
+	crawler.progressTotal = calcProgressTotal(crawler.maxDepth, crawler.maxReadAlso)
+	return crawler
+}
 
 type CrawlerOption = func(*Crawler)
 
