@@ -13,6 +13,7 @@ const (
 	NotCrawled   State = 0
 	BeingCrawled State = 1
 	Crawled      State = 2
+	Linked       State = 3
 )
 
 type url = string
@@ -25,11 +26,9 @@ type Storage interface {
 	GetBookState(ctx context.Context, url url) (State, error)
 	SetBookState(ctx context.Context, url url, previous State, new State) (bool, error)
 
-	GetBook(ctx context.Context, url url) (*book.Book, error)
+	GetBook(ctx context.Context, url url, maxDepth int) (*book.Book, error)
 	SetBook(ctx context.Context, url url, book *book.Book) error
 	LinkBooks(ctx context.Context, url url, bookUrls ...url) error
-
-	BookGraph(ctx context.Context, root *book.Book, maxDepth int) (book.Graph, error)
 }
 
 type ErrBookNotFound struct {

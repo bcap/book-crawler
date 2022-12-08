@@ -1,3 +1,3 @@
 #!/bin/bash
 
-dot -Tsvg graph.dot -o graph.svg
+dot -Tsvg $1 -o $2

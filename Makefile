@@ -2,14 +2,22 @@ build:
 	docker build -t book-crawler:latest .
 
 run: build
-	docker run --rm -i book-crawler:latest "https://www.goodreads.com/book/show/3869.A_Brief_History_of_Time"
+	docker run --network host --rm -i book-crawler:latest \
+	"https://www.goodreads.com/book/show/3869.A_Brief_History_of_Time" --neo4j
 
-run-large: build
-	docker run --rm -i book-crawler:latest "https://www.goodreads.com/book/show/3869.A_Brief_History_of_Time" -d 10 -r 3 > graph.dot
+runv: build
+	docker run --network host --rm -i book-crawler:latest \
+	"https://www.goodreads.com/book/show/3869.A_Brief_History_of_Time" --neo4j -v
 
 run-graph: build
-	docker run --rm -i book-crawler:latest "https://www.goodreads.com/book/show/3869.A_Brief_History_of_Time" > graph.dot && ./dot-to-svg.sh && open graph.svg
+	docker run --network host --rm -i book-crawler:latest \
+	"https://www.goodreads.com/book/show/3869.A_Brief_History_of_Time" --dot > graph.dot && \
+	./dot-to-svg.sh graph.dot graph.svg && \
+	open graph.svg
 
 shell: build
-	docker run --rm -it --entrypoint /bin/bash book-crawler:latest
+	docker run --network host --rm -it --entrypoint /bin/bash book-crawler:latest
 
+shellb: 
+	docker build --target pre-build -t book-crawler:pre-build . && \
+	docker run --network host --rm -it --entrypoint /bin/bash book-crawler:pre-build

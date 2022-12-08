@@ -3,4 +3,6 @@
 *.dot
 *.svg
 
+volumes/
+
 .DS_Store

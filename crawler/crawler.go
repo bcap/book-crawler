@@ -7,9 +7,9 @@ import (
 	"math"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/PuerkitoBio/goquery"
+	"github.com/davecgh/go-spew/spew"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/semaphore"
 
@@ -17,6 +17,7 @@ import (
 	myhttp "github.com/bcap/book-crawler/http"
 	"github.com/bcap/book-crawler/log"
 	"github.com/bcap/book-crawler/storage"
+	"github.com/bcap/book-crawler/storage/memory"
 )
 
 var extraStatusCodesToRetry = []int{
@@ -24,11 +25,16 @@ var extraStatusCodesToRetry = []int{
 }
 
 type Crawler struct {
-	client  *myhttp.Client
-	storage storage.Storage
+	Client  *myhttp.Client
+	Storage storage.Storage
 
 	maxDepth    int
 	maxReadAlso int
+
+	minNumRatings int32
+	maxNumRatings int32
+	minRating     float32
+	maxRating     float32
 
 	maxParallelism int
 
@@ -37,58 +43,23 @@ type Crawler struct {
 	crawled         *int32
 }
 
-type CrawlerOption = func(*Crawler)
-
-func WithMaxDepth(maxDepth int) CrawlerOption {
-	return func(c *Crawler) {
-		c.maxDepth = maxDepth
-	}
-}
-
-func WithMaxReadAlso(maxReadAlso int) CrawlerOption {
-	return func(c *Crawler) {
-		c.maxReadAlso = maxReadAlso
-	}
-}
-
-func WithMaxParallelism(maxParallelism int) CrawlerOption {
-	return func(c *Crawler) {
-		c.maxParallelism = maxParallelism
-		c.client.ParallelismSem = semaphore.NewWeighted(int64(maxParallelism))
-	}
-}
-
-func WithRequestMaxRetries(maxRetries int) CrawlerOption {
-	return func(c *Crawler) {
-		c.client.RetryMax(maxRetries)
-	}
-}
-
-func WithRequestMaxRetryWait(maxWait time.Duration) CrawlerOption {
-	return func(c *Crawler) {
-		c.client.RetryWaitMax(maxWait)
-	}
-}
-
-func WithRequestMinRetryWait(minWait time.Duration) CrawlerOption {
-	return func(c *Crawler) {
-		c.client.RetryWaitMin(minWait)
-	}
-}
-
 func NewCrawler(options ...CrawlerOption) *Crawler {
 	var currentProgress int64
 	var crawled int32
-	var inMemoryStorage = &storage.InMemoryStorage{}
+	var inMemoryStorage = &memory.Storage{}
 	inMemoryStorage.Initialize(context.Background())
 	crawler := &Crawler{
-		client:          myhttp.NewClient(semaphore.NewWeighted(1), extraStatusCodesToRetry),
+		Client:          myhttp.NewClient(semaphore.NewWeighted(1), extraStatusCodesToRetry),
+		Storage:         inMemoryStorage,
 		maxDepth:        3,
 		maxReadAlso:     5,
+		minNumRatings:   -1,
+		maxNumRatings:   -1,
+		minRating:       -1,
+		maxRating:       -1,
 		currentProgress: &currentProgress,
 		crawled:         &crawled,
 		maxParallelism:  1,
-		storage:         inMemoryStorage,
 	}
 	for _, option := range options {
 		option(crawler)
@@ -97,26 +68,22 @@ func NewCrawler(options ...CrawlerOption) *Crawler {
 	return crawler
 }
 
-func (c *Crawler) Crawl(ctx context.Context, url string) (book.Graph, error) {
+func (c *Crawler) Crawl(ctx context.Context, url string) error {
 	log.Infof(
 		"Crawling up at most %d books in parallel, up to depth %d and following up to %d book recommendations per book. This run will potentially execute %d book checks",
 		c.maxParallelism, c.maxDepth, c.maxReadAlso, c.progressTotal,
 	)
+
 	err := c.crawl(ctx, url, 0, 0)
 	if err != nil {
-		return book.Graph{}, err
-	}
-
-	b, err := c.storage.GetBook(ctx, url)
-	if err != nil {
-		return book.Graph{}, err
+		return err
 	}
 
 	log.Infof(
 		"Crawled %d books with %d checks. %d checks avoided",
 		*c.crawled, *c.currentProgress, c.progressTotal-*c.currentProgress,
 	)
-	return c.storage.BookGraph(ctx, b, c.maxDepth)
+	return nil
 }
 
 func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) error {
@@ -127,28 +94,39 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 	progress := atomic.AddInt64(c.currentProgress, 1)
 	progressPct := float32(progress) / float32(c.progressTotal) * 100
 
-	logAlreadyCrawled := func() {
-		log.Debugf("[%02.1f%%, %02d/%02d] book already crawled or being crawled, skipping (%s)", progressPct, depth, index, url)
-	}
-	state, err := c.storage.GetBookState(ctx, url)
+	state, err := c.Storage.GetBookState(ctx, url)
 	if err != nil {
 		return err
 	}
-	if state != storage.NotCrawled {
-		logAlreadyCrawled()
+	if state == storage.BeingCrawled {
 		return nil
 	}
+	if state == storage.Linked {
+		b, err := c.Storage.GetBook(ctx, url, 1)
+		if err != nil {
+			return err
+		}
+		errGroup := errgroup.Group{}
+		for _idx, _relatedBook := range b.AlsoRead {
+			idx := _idx
+			relatedURL := _relatedBook.URL
+			errGroup.Go(func() error {
+				return c.crawl(ctx, relatedURL, depth+1, idx)
+			})
+		}
+		return errGroup.Wait()
+	}
 
-	if set, err := c.storage.SetBookState(ctx, url, storage.NotCrawled, storage.BeingCrawled); err != nil {
+	if set, err := c.Storage.SetBookState(ctx, url, storage.NotCrawled, storage.BeingCrawled); err != nil {
 		return err
 	} else if !set {
-		logAlreadyCrawled()
+		log.Debugf("[%02.1f%%, %02d/%02d] book already being crawled by some other goroutine, skipping (%s)", progressPct, depth, index, url)
 		return nil
 	}
 
-	b := book.New(url, c.maxReadAlso)
+	b := book.New(url)
 
-	res, err := c.client.Request(ctx, "GET", url, nil, nil)
+	res, err := c.Client.Request(ctx, "GET", url, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -166,12 +144,32 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 	crawled := atomic.AddInt32(c.crawled, 1)
 
 	book.Build(b, doc)
-	c.storage.SetBook(ctx, url, b)
+
+	if (c.minNumRatings >= 0 && b.RatingsTotal < c.minNumRatings) ||
+		(c.maxNumRatings >= 0 && b.RatingsTotal > c.maxNumRatings) ||
+		(c.minRating >= 0 && b.Rating < c.minRating) ||
+		(c.maxRating >= 0 && b.Rating > c.maxRating) {
+		return nil
+	}
+
+	if err := c.Storage.SetBook(ctx, url, b); err != nil {
+		return err
+	}
+
+	if set, err := c.Storage.SetBookState(ctx, url, storage.BeingCrawled, storage.Crawled); err != nil {
+		return err
+	} else if !set {
+		return fmt.Errorf(
+			"invalid state transition: book at %s could not be transitioned from state %v to %v",
+			url, storage.BeingCrawled, storage.Crawled,
+		)
+	}
 
 	log.Infof(
 		"[%03d, %02.1f%%, %02d/%02d] crawled book %s by %s (%s)",
 		crawled, progressPct, depth, index, b.Title, b.Author, url,
 	)
+	log.Debugf("crawled book: %s", spew.Sdump(b))
 
 	alsoReadLink, hasAlsoReadLink := doc.Find("a.actionLink.seeMoreLink").Attr("href")
 	if !hasAlsoReadLink {
@@ -187,6 +185,15 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 		if err := c.crawlAlsoRead(ctx, url, alsoReadLink, depth); err != nil {
 			return err
 		}
+	}
+
+	if set, err := c.Storage.SetBookState(ctx, url, storage.Crawled, storage.Linked); err != nil {
+		return err
+	} else if !set {
+		return fmt.Errorf(
+			"invalid state transition: book at %s could not be transitioned from state %v to %v",
+			url, storage.Crawled, storage.Linked,
+		)
 	}
 
 	return nil
@@ -209,7 +216,7 @@ func (c *Crawler) crawlAlsoRead(ctx context.Context, bookURL string, similarBook
 			if err != nil {
 				return err
 			}
-			if err := c.storage.LinkBooks(ctx, bookURL, linkURL); err != nil {
+			if err := c.Storage.LinkBooks(ctx, bookURL, linkURL); err != nil {
 				return err
 			}
 			return nil
@@ -219,11 +226,12 @@ func (c *Crawler) crawlAlsoRead(ctx context.Context, bookURL string, similarBook
 	if err := group.Wait(); err != nil {
 		return err
 	}
+
 	return nil
 }
 
 func (c *Crawler) extractRelatedBookURLs(ctx context.Context, url string) ([]string, error) {
-	resp, err := c.client.Request(ctx, "GET", url, nil, nil)
+	resp, err := c.Client.Request(ctx, "GET", url, nil, nil)
 	if err != nil {
 		return nil, err
 	}

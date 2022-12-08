@@ -1,0 +1,16 @@
+version: "3.9"
+services:
+  neo4j:
+    image: neo4j
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - ./volumes/neo4j/data:/data:rw
+      - ./volumes/neo4j/logs:/logs:rw
+    environment:
+      - NEO4J_AUTH=none
+    deploy:
+      resources:
+        limits:
+          memory: 1GB

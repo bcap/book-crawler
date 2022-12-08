@@ -21,15 +21,15 @@ func PrintBookGraph(graph book.Graph, writer io.Writer) {
 					"%s\\l%s\\l%0.1f (%d ratings)\\l%d reviews\\ldepth:%d\\l",
 					book.Title,
 					book.Author,
-					float32(book.Rating)/100.0,
-					book.Ratings,
+					book.Rating,
+					book.RatingsTotal,
 					book.Reviews,
 					depth,
 				)
 				fmt.Fprintf(
 					writer,
 					"%q [nojustify=false label=\"%s\" URL=\"%s\"]\n",
-					book,
+					bookID(book),
 					label,
 					book.URL,
 				)
@@ -45,7 +45,7 @@ func PrintBookGraph(graph book.Graph, writer io.Writer) {
 			}
 			nodes := make([]string, len(books))
 			for idx, book := range books {
-				nodes[idx] = fmt.Sprintf("\"%s\"", book.String())
+				nodes[idx] = fmt.Sprintf("\"%s by %s\"", book.Title, book.Author)
 			}
 			fmt.Fprintf(writer, "{rank=%s; %s}\n", rank, strings.Join(nodes, "; "))
 		}
@@ -56,7 +56,7 @@ func PrintBookGraph(graph book.Graph, writer io.Writer) {
 		visited[book] = struct{}{}
 		for idx, relatedBook := range book.AlsoRead {
 			label := fmt.Sprintf("idx:%d", idx)
-			fmt.Fprintf(writer, "%q -> %q [label=%q]\n", book, relatedBook, label)
+			fmt.Fprintf(writer, "%q -> %q [label=%q]\n", bookID(book), bookID(relatedBook), label)
 		}
 		for _, relatedBook := range book.AlsoRead {
 			if _, v := visited[relatedBook]; !v {
@@ -109,14 +109,18 @@ func processMinMax(graph book.Graph, result *analysis) {
 		if result.minReviews > book.Reviews {
 			result.minReviews = book.Reviews
 		}
-		if result.minRatings > book.Ratings {
-			result.minRatings = book.Ratings
+		if result.minRatings > book.RatingsTotal {
+			result.minRatings = book.RatingsTotal
 		}
 		if result.maxReviews < book.Reviews {
 			result.maxReviews = book.Reviews
 		}
-		if result.maxRatings < book.Ratings {
-			result.maxRatings = book.Ratings
+		if result.maxRatings < book.RatingsTotal {
+			result.maxRatings = book.RatingsTotal
 		}
 	}
+}
+
+func bookID(b *book.Book) string {
+	return fmt.Sprintf("%s by %s", b.Title, b.Author)
 }

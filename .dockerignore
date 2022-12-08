@@ -4,6 +4,10 @@
 *.dot
 *.svg
 
+volumes/
+
 dot-to-svg.sh
 Dockerfile
+docker-compose.yaml
+Makefile
 README.md
