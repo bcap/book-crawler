@@ -3,7 +3,7 @@ package neo4j
 import (
 	"context"
 	"fmt"
-	"strings"
+	"time"
 
 	"github.com/bcap/book-crawler/book"
 	"github.com/bcap/book-crawler/storage"
@@ -16,8 +16,8 @@ const DefaultURL = "neo4j://localhost:7687"
 
 var initStatements = []string{
 	"CREATE CONSTRAINT IF NOT EXISTS FOR (b:Book) REQUIRE (b.url) IS UNIQUE",
+	"CREATE CONSTRAINT IF NOT EXISTS FOR (p:Person) REQUIRE (p.url) IS UNIQUE",
 	"CREATE INDEX IF NOT EXISTS FOR (b:Book) ON (b.title)",
-	"CREATE INDEX IF NOT EXISTS FOR (b:Book) ON (b.author)",
 }
 
 type Storage struct {
@@ -57,21 +57,25 @@ func (s *Storage) Shutdown(ctx context.Context) error {
 	return s.driver.Close(ctx)
 }
 
-func (s *Storage) GetBookState(ctx context.Context, url string) (storage.State, error) {
-	work := func(tx neo4j.ManagedTransaction) (storage.State, error) {
-		query := "MATCH (b:Book {url: $url}) RETURN b.state"
+func (s *Storage) GetBookState(ctx context.Context, url string) (storage.StateChange, error) {
+	work := func(tx neo4j.ManagedTransaction) (storage.StateChange, error) {
+		query := "MATCH (b:Book {url: $url}) RETURN b.crawlState, b.crawlStateChanged"
 		records, err := tx.Run(ctx, query, map[string]any{"url": url})
 		if err != nil {
-			return storage.NotCrawled, NewErrQuery(query, err)
+			return storage.StateChange{}, NewErrQuery(query, err)
 		}
 		if records.Next(ctx) {
-			value := records.Record().Values[0]
-			return storage.State(value.(int64)), nil
+			state := records.Record().Values[0]
+			stateChanged := records.Record().Values[1]
+			return storage.StateChange{
+				When:  stateChanged.(time.Time),
+				State: storage.State(state.(int64)),
+			}, nil
 		}
-		return storage.NotCrawled, nil
+		return storage.StateChange{}, nil
 	}
 	result, err := s.execute(ctx, true, func(tx neo4j.ManagedTransaction) (any, error) { return work(tx) }, 0)
-	return result.(storage.State), err
+	return result.(storage.StateChange), err
 }
 
 func (s *Storage) SetBookState(ctx context.Context, url string, previous storage.State, new storage.State) (bool, error) {
@@ -82,24 +86,25 @@ func (s *Storage) SetBookState(ctx context.Context, url string, previous storage
 			return false, NewErrQuery(query, err)
 		}
 		if !records.Peek(ctx) {
-			if previous != storage.NotCrawled {
-				return false, nil
-			}
-			query = "CREATE (b:Book {url: $url, state: $state})"
-			if _, err := tx.Run(ctx, query, map[string]any{"url": url, "state": new}); err != nil {
+			query = "CREATE (b:Book {url: $url, crawlState: $state, crawlStateChanged: $when})"
+			params := map[string]any{"url": url, "state": new, "when": time.Now().UTC()}
+			if _, err := tx.Run(ctx, query, params); err != nil {
 				return false, NewErrQuery(query, err)
 			}
 			return true, nil
 		}
 
 		query = "" +
-			"MATCH (b:Book {url: $url, state: $oldState}) " +
-			"SET b.state = $newState " +
+			"MATCH (b:Book {url: $url, crawlState: $oldState}) " +
+			"SET b.crawlState = $newState, b.crawlStateChanged = $when " +
 			"RETURN b "
-		records, err = tx.Run(
-			ctx, query,
-			map[string]any{"url": url, "oldState": previous, "newState": new},
-		)
+		params := map[string]any{
+			"url":      url,
+			"oldState": previous,
+			"newState": new,
+			"when":     time.Now().UTC(),
+		}
+		records, err = tx.Run(ctx, query, params)
 		if err != nil {
 			return false, NewErrQuery(query, err)
 		}
@@ -112,31 +117,59 @@ func (s *Storage) SetBookState(ctx context.Context, url string, previous storage
 
 func (s *Storage) GetBook(ctx context.Context, url string, maxDepth int) (*book.Book, error) {
 	work := func(tx neo4j.ManagedTransaction) (*book.Book, error) {
-		query := "MATCH (b:Book {url: $url}) RETURN b"
+		query := "MATCH (b:Book {url: $url})<-[:AUTHORED]-(p:Person) RETURN b, p"
 		records, err := tx.Run(ctx, query, map[string]any{"url": url})
 		if err != nil {
 			return nil, NewErrQuery(query, err)
 		}
-		if records.Next(ctx) {
-			node := records.Record().Values[0].(dbtype.Node)
-			return book.FromNeo4jNode(&node), nil
+		if !records.Next(ctx) {
+			return nil, nil
 		}
-		return nil, nil
+		bookNode := records.Record().Values[0].(dbtype.Node)
+		personNode := records.Record().Values[1].(dbtype.Node)
+		value := func(node *dbtype.Node, key string, defaultValue any) any {
+			if v, has := node.Props[key]; has {
+				return v
+			}
+			return defaultValue
+		}
+		return &book.Book{
+			Title:        value(&bookNode, "title", "").(string),
+			Rating:       float32(value(&bookNode, "rating", 0.0).(float64)),
+			RatingsTotal: int32(value(&bookNode, "ratings", 0).(int64)),
+			Reviews:      int32(value(&bookNode, "reviews", 0).(int64)),
+			URL:          value(&bookNode, "url", "").(string),
+			Author:       value(&personNode, "name", "").(string),
+			AuthorURL:    value(&personNode, "url", "").(string),
+			AlsoRead:     []*book.Book{},
+		}, nil
 	}
 	result, err := s.execute(ctx, true, func(tx neo4j.ManagedTransaction) (any, error) { return work(tx) }, nil)
 	return result.(*book.Book), err
 }
 
 func (s *Storage) SetBook(ctx context.Context, url string, book *book.Book) error {
-	work := func(tx neo4j.ManagedTransaction) (int64, error) {
-		attrs := book.ToNeo4jAttributes()
-		query := fmt.Sprintf("MERGE (b:Book {url: $url}) SET %s RETURN id(b)", toSetString("b", attrs))
-		records, err := tx.Run(ctx, query, attrs)
-		if err != nil {
-			return 0, NewErrQuery(query, err)
+	work := func(tx neo4j.ManagedTransaction) (struct{}, error) {
+		query := "" +
+			"MERGE (b:Book {url: $bookURL}) " +
+			"  SET b.title = $title, b.rating = $rating, b.ratings = $ratings, b.reviews = $reviews " +
+			"MERGE (p:Person {url: $personURL}) " +
+			"  SET p.name = $author " +
+			"MERGE (p)-[:AUTHORED]->(b) "
+		attrs := map[string]any{
+			"title":     book.Title,
+			"author":    book.Author,
+			"rating":    book.Rating,
+			"ratings":   book.RatingsTotal,
+			"reviews":   book.Reviews,
+			"bookURL":   book.URL,
+			"personURL": book.AuthorURL,
 		}
-		records.Next(ctx)
-		return records.Record().Values[0].(int64), nil
+		_, err := tx.Run(ctx, query, attrs)
+		if err != nil {
+			return struct{}{}, NewErrQuery(query, err)
+		}
+		return struct{}{}, nil
 	}
 	_, err := s.execute(ctx, true, func(tx neo4j.ManagedTransaction) (any, error) { return work(tx) }, 0)
 	return err
@@ -190,23 +223,6 @@ func (s *Storage) execute(
 		return zeroV, err
 	}
 	return result, nil
-}
-
-func toSetString(alias string, params map[string]any) string {
-	b := strings.Builder{}
-	i := 0
-	for key := range params {
-		b.WriteString(alias)
-		b.WriteString(".")
-		b.WriteString(key)
-		b.WriteString(" = $")
-		b.WriteString(key)
-		if i != len(params)-1 {
-			b.WriteString(", ")
-		}
-		i++
-	}
-	return b.String()
 }
 
 // Making sure Storage implements Storage

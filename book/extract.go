@@ -11,6 +11,7 @@ import (
 func Build(book *Book, doc *goquery.Document) {
 	book.Title = extractTitle(doc)
 	book.Author = extractAuthor(doc)
+	book.AuthorURL = extractAuthorURL(doc)
 	book.Rating = extractRating(doc)
 	book.RatingsTotal = extractNumRatingsTotal(doc)
 	book.Ratings1 = extractNumRatings(doc, 1)
@@ -35,6 +36,14 @@ func extractAuthor(doc *goquery.Document) string {
 		return ""
 	}
 	return html.CleanText(selection.Eq(0).Text())
+}
+
+func extractAuthorURL(doc *goquery.Document) string {
+	selection := doc.Find("a.authorName")
+	if selection.Length() == 0 {
+		return ""
+	}
+	return html.CleanText(selection.AttrOr("href", ""))
 }
 
 func extractRating(doc *goquery.Document) float32 {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/bcap/book-crawler/book"
 	"github.com/bcap/book-crawler/storage"
@@ -13,13 +14,13 @@ type Storage struct {
 	books      map[string]*book.Book
 	booksMutex sync.RWMutex
 
-	state      map[string]storage.State
+	state      map[string]storage.StateChange
 	stateMutex sync.RWMutex
 }
 
 func (s *Storage) Initialize(context.Context) error {
 	s.books = make(map[string]*book.Book)
-	s.state = make(map[string]storage.State)
+	s.state = make(map[string]storage.StateChange)
 	return nil
 }
 
@@ -29,7 +30,7 @@ func (s *Storage) Shutdown(ctx context.Context) error {
 	return nil
 }
 
-func (s *Storage) GetBookState(ctx context.Context, url string) (storage.State, error) {
+func (s *Storage) GetBookState(ctx context.Context, url string) (storage.StateChange, error) {
 	s.stateMutex.RLock()
 	defer s.stateMutex.RUnlock()
 
@@ -41,19 +42,13 @@ func (s *Storage) SetBookState(ctx context.Context, url string, previous storage
 	defer s.stateMutex.Unlock()
 
 	// CAS check
-	if s.state[url] != previous {
+	if s.state[url].State != previous {
 		return false, nil
 	}
 
-	// no-op case
-	if previous == new {
-		return true, nil
-	}
-
-	if new == 0 {
-		delete(s.state, url)
-	} else {
-		s.state[url] = new
+	s.state[url] = storage.StateChange{
+		When:  time.Now(),
+		State: new,
 	}
 
 	return true, nil

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/bcap/book-crawler/book"
 )
@@ -16,6 +17,11 @@ const (
 	Linked       State = 3
 )
 
+type StateChange struct {
+	When  time.Time
+	State State
+}
+
 type url = string
 
 type Storage interface {
@@ -23,7 +29,7 @@ type Storage interface {
 	Shutdown(ctx context.Context) error
 
 	// State manipulation is a CAS operation (Compare And Swap)
-	GetBookState(ctx context.Context, url url) (State, error)
+	GetBookState(ctx context.Context, url url) (StateChange, error)
 	SetBookState(ctx context.Context, url url, previous State, new State) (bool, error)
 
 	GetBook(ctx context.Context, url url, maxDepth int) (*book.Book, error)

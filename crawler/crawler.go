@@ -43,16 +43,16 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 
 	checked := atomic.AddInt32(c.checked, 1)
 
-	state, err := c.Storage.GetBookState(ctx, url)
+	stateChange, err := c.Storage.GetBookState(ctx, url)
 	if err != nil {
 		return err
 	}
 
-	if state == storage.BeingCrawled {
+	if stateChange.State == storage.BeingCrawled {
 		return nil
 	}
 
-	if state == storage.Linked {
+	if stateChange.State == storage.Linked {
 		b, err := c.Storage.GetBook(ctx, url, 1)
 		if err != nil {
 			return err
