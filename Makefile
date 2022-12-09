@@ -3,11 +3,7 @@ build:
 
 run: build
 	docker run --network host --rm -i book-crawler:latest \
-	"https://www.goodreads.com/book/show/3869.A_Brief_History_of_Time" --neo4j
-
-runv: build
-	docker run --network host --rm -i book-crawler:latest \
-	"https://www.goodreads.com/book/show/3869.A_Brief_History_of_Time" --neo4j -v
+	"https://www.goodreads.com/book/show/3869.A_Brief_History_of_Time" --neo4j $(args)
 
 run-graph: build
 	docker run --network host --rm -i book-crawler:latest \
