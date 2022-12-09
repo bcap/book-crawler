@@ -74,8 +74,7 @@ func (s *Storage) GetBookState(ctx context.Context, url string) (storage.StateCh
 		}
 		return storage.StateChange{}, nil
 	}
-	result, err := s.execute(ctx, true, func(tx neo4j.ManagedTransaction) (any, error) { return work(tx) }, 0)
-	return result.(storage.StateChange), err
+	return execute(ctx, s.driver, true, work)
 }
 
 func (s *Storage) SetBookState(ctx context.Context, url string, previous storage.State, new storage.State) (bool, error) {
@@ -111,8 +110,7 @@ func (s *Storage) SetBookState(ctx context.Context, url string, previous storage
 
 		return records.Peek(ctx), nil
 	}
-	result, err := s.execute(ctx, true, func(tx neo4j.ManagedTransaction) (any, error) { return work(tx) }, false)
-	return result.(bool), err
+	return execute(ctx, s.driver, true, work)
 }
 
 func (s *Storage) GetBook(ctx context.Context, url string, maxDepth int) (*book.Book, error) {
@@ -144,8 +142,7 @@ func (s *Storage) GetBook(ctx context.Context, url string, maxDepth int) (*book.
 			AlsoRead:     []*book.Book{},
 		}, nil
 	}
-	result, err := s.execute(ctx, true, func(tx neo4j.ManagedTransaction) (any, error) { return work(tx) }, nil)
-	return result.(*book.Book), err
+	return execute(ctx, s.driver, true, work)
 }
 
 func (s *Storage) SetBook(ctx context.Context, url string, book *book.Book) error {
@@ -171,7 +168,7 @@ func (s *Storage) SetBook(ctx context.Context, url string, book *book.Book) erro
 		}
 		return struct{}{}, nil
 	}
-	_, err := s.execute(ctx, true, func(tx neo4j.ManagedTransaction) (any, error) { return work(tx) }, 0)
+	_, err := execute(ctx, s.driver, true, work)
 	return err
 }
 
@@ -189,40 +186,38 @@ func (s *Storage) LinkBooks(ctx context.Context, url string, bookURLs ...string)
 		}
 		return struct{}{}, nil
 	}
-	_, err := s.execute(ctx, true, func(tx neo4j.ManagedTransaction) (any, error) { return work(tx) }, struct{}{})
+	_, err := execute(ctx, s.driver, true, work)
 	return err
 }
 
 func (s *Storage) runInitStatements(ctx context.Context) error {
-	_, err := s.execute(ctx, true, func(tx neo4j.ManagedTransaction) (any, error) {
+	_, err := execute(ctx, s.driver, true, func(tx neo4j.ManagedTransaction) (struct{}, error) {
 		for _, stmt := range initStatements {
 			if _, err := tx.Run(ctx, stmt, nil); err != nil {
-				return nil, NewErrQuery(stmt, err)
+				return struct{}{}, NewErrQuery(stmt, err)
 			}
 		}
-		return nil, nil
-	}, nil)
+		return struct{}{}, nil
+	})
 	return err
 }
 
-func (s *Storage) execute(
+func execute[T any](
 	ctx context.Context,
+	driver neo4j.DriverWithContext,
 	write bool,
-	work neo4j.ManagedTransactionWork,
-	zeroV any,
+	work func(neo4j.ManagedTransaction) (T, error),
 	configurers ...func(*neo4j.TransactionConfig),
-) (any, error) {
-	session := s.driver.NewSession(ctx, neo4j.SessionConfig{})
+) (T, error) {
+	session := driver.NewSession(ctx, neo4j.SessionConfig{})
 	defer session.Close(ctx)
-	function := session.ExecuteRead
+	executeFn := session.ExecuteRead
 	if write {
-		function = session.ExecuteWrite
+		executeFn = session.ExecuteWrite
 	}
-	result, err := function(ctx, work, configurers...)
-	if err != nil {
-		return zeroV, err
-	}
-	return result, nil
+	workFn := func(tx neo4j.ManagedTransaction) (any, error) { return work(tx) }
+	result, err := executeFn(ctx, workFn, configurers...)
+	return result.(T), err
 }
 
 // Making sure Storage implements Storage
