@@ -2,6 +2,7 @@ package crawler
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"golang.org/x/sync/semaphore"
@@ -10,6 +11,10 @@ import (
 	"github.com/bcap/book-crawler/storage"
 	"github.com/bcap/book-crawler/storage/memory"
 )
+
+var extraStatusCodesToRetry = []int{
+	403, // sometimes goodreads returns 403 (Forbidden), but we should retry on it
+}
 
 type Crawler struct {
 	Client  *myhttp.Client
@@ -27,6 +32,9 @@ type Crawler struct {
 
 	crawled *int32
 	checked *int32
+
+	runLock sync.Mutex
+	start   time.Time
 }
 
 func NewCrawler(options ...CrawlerOption) *Crawler {
@@ -39,13 +47,13 @@ func NewCrawler(options ...CrawlerOption) *Crawler {
 		Storage:        inMemoryStorage,
 		maxDepth:       3,
 		maxReadAlso:    5,
+		maxParallelism: 1,
 		minNumRatings:  -1,
 		maxNumRatings:  -1,
 		minRating:      -1,
 		maxRating:      -1,
 		crawled:        &crawled,
 		checked:        &checked,
-		maxParallelism: 1,
 	}
 	for _, option := range options {
 		option(crawler)

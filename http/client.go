@@ -57,6 +57,7 @@ func (c *Client) Request(ctx context.Context, method string, url string, header 
 		}
 		defer c.ParallelismSem.Release(1)
 	}
+	log.Debugf("requesting: %s %s", method, url)
 	return c.client.Do(req)
 }
 

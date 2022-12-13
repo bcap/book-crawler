@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/PuerkitoBio/goquery"
-	"github.com/davecgh/go-spew/spew"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/bcap/book-crawler/book"
@@ -17,23 +17,48 @@ import (
 	"github.com/bcap/book-crawler/storage"
 )
 
-var extraStatusCodesToRetry = []int{
-	403, // sometimes goodreads returns 403 (Forbidden), but we should retry on it
-}
-
 func (c *Crawler) Crawl(ctx context.Context, url string) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	if !c.runLock.TryLock() {
+		return errors.New("Crawl cannot be called concurrently")
+	}
+	defer c.runLock.Unlock()
+
+	c.start = time.Now()
+
 	log.Infof(
 		"Crawling up at most %d books in parallel, up to depth %d and following up to %d book recommendations per book",
 		c.maxParallelism, c.maxDepth, c.maxReadAlso,
 	)
+
+	go c.keepLoggingProgress(ctx)
 
 	err := c.crawl(ctx, url, 0, 0)
 	if err != nil {
 		return err
 	}
 
-	log.Infof("Crawled %d books with %d checks", *c.crawled, *c.checked)
+	c.logProgress()
 	return nil
+}
+
+func (c *Crawler) keepLoggingProgress(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	for {
+		select {
+		case <-ticker.C:
+			c.logProgress()
+		case <-ctx.Done():
+			ticker.Stop()
+			return
+		}
+	}
+}
+
+func (c *Crawler) logProgress() {
+	log.Infof("Crawled %d books in %d book checks", atomic.LoadInt32(c.crawled), atomic.LoadInt32(c.checked))
 }
 
 func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) error {
@@ -48,54 +73,53 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 		return err
 	}
 
-	if stateChange.State == storage.BeingCrawled {
+	stateChangedInCurrentRun := stateChange.When.After(c.start)
+
+	log.Debugf(
+		"url: %s, state: %v, depth: %d, index: %d, state changed: %v, state changed in current run: %v",
+		url, stateChange.State, depth, index, stateChange.When, stateChangedInCurrentRun,
+	)
+
+	if stateChangedInCurrentRun {
 		return nil
+	}
+
+	if stateChange.State == storage.Crawled {
+		if stateChange, set, err := c.Storage.SetBookState(ctx, url, stateChange, storage.Crawled); err != nil {
+			return err
+		} else if !set {
+			return nil
+		} else {
+			return c.handleCrawled(ctx, url, stateChange, depth, index, checked, nil)
+		}
 	}
 
 	if stateChange.State == storage.Linked {
-		b, err := c.Storage.GetBook(ctx, url, 1)
-		if err != nil {
+		if stateChange, set, err := c.Storage.SetBookState(ctx, url, stateChange, storage.Linked); err != nil {
 			return err
+		} else if !set {
+			return nil
+		} else {
+			return c.handlePreviouslyLinked(ctx, url, stateChange, depth, index, checked)
 		}
-		errGroup := errgroup.Group{}
-		for _idx, _relatedBook := range b.AlsoRead {
-			idx := _idx
-			relatedURL := _relatedBook.URL
-			errGroup.Go(func() error {
-				return c.crawl(ctx, relatedURL, depth+1, idx)
-			})
-		}
-		return errGroup.Wait()
 	}
 
-	if set, err := c.Storage.SetBookState(ctx, url, storage.NotCrawled, storage.BeingCrawled); err != nil {
+	if stateChange, set, err := c.Storage.SetBookState(ctx, url, stateChange, storage.BeingCrawled); err != nil {
 		return err
 	} else if !set {
-		log.Debugf(
-			"[%03d %02d/%02d] book already being crawled by some other goroutine, skipping (%s)",
-			checked, depth, index, url,
-		)
 		return nil
+	} else {
+		return c.handleNotCrawled(ctx, url, stateChange, depth, index, checked)
 	}
+}
 
+func (c *Crawler) handleNotCrawled(ctx context.Context, url string, prevState storage.StateChange, depth int, index int, checked int32) error {
 	b := book.New(url)
 
-	res, err := c.Client.Request(ctx, "GET", url, nil, nil)
+	doc, err := c.fetch(ctx, url)
 	if err != nil {
 		return err
 	}
-
-	if res.StatusCode/100 != 2 {
-		err := fmt.Errorf("failed to fetch: %s returned status code %d", url, res.StatusCode)
-		return err
-	}
-
-	doc, err := goquery.NewDocumentFromReader(res.Body)
-	if err != nil {
-		return err
-	}
-
-	crawled := atomic.AddInt32(c.crawled, 1)
 
 	book.Build(b, doc)
 
@@ -110,7 +134,8 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 		return err
 	}
 
-	if set, err := c.Storage.SetBookState(ctx, url, storage.BeingCrawled, storage.Crawled); err != nil {
+	stateChange, set, err := c.Storage.SetBookState(ctx, url, prevState, storage.Crawled)
+	if err != nil {
 		return err
 	} else if !set {
 		return fmt.Errorf(
@@ -119,18 +144,31 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 		)
 	}
 
+	crawled := atomic.AddInt32(c.crawled, 1)
+
 	log.Infof(
 		"[%03d, %03d, %02d/%02d] crawled book %s by %s (%s)",
 		checked, crawled, depth, index, b.Title, b.Author, url,
 	)
-	log.Debugf("crawled book: %s", spew.Sdump(b))
+
+	return c.handleCrawled(ctx, url, stateChange, depth, index, checked, doc)
+}
+
+func (c *Crawler) handleCrawled(ctx context.Context, url string, prevState storage.StateChange, depth int, index int, checked int32, doc *goquery.Document) error {
+	if doc == nil {
+		var err error
+		doc, err = c.fetch(ctx, url)
+		if err != nil {
+			return err
+		}
+	}
 
 	alsoReadLink, hasAlsoReadLink := doc.Find("a.actionLink.seeMoreLink").Attr("href")
 	if !hasAlsoReadLink {
 		return errors.New("book has no related books")
 	}
 
-	alsoReadLink, err = myhttp.AbsoluteURL(url, alsoReadLink)
+	alsoReadLink, err := myhttp.AbsoluteURL(url, alsoReadLink)
 	if err != nil {
 		return err
 	}
@@ -141,7 +179,7 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 		}
 	}
 
-	if set, err := c.Storage.SetBookState(ctx, url, storage.Crawled, storage.Linked); err != nil {
+	if _, set, err := c.Storage.SetBookState(ctx, url, prevState, storage.Linked); err != nil {
 		return err
 	} else if !set {
 		return fmt.Errorf(
@@ -151,6 +189,23 @@ func (c *Crawler) crawl(ctx context.Context, url string, depth int, index int) e
 	}
 
 	return nil
+}
+
+func (c *Crawler) handlePreviouslyLinked(ctx context.Context, url string, prevState storage.StateChange, depth int, index int, checked int32) error {
+	b, err := c.Storage.GetBook(ctx, url, 1)
+	if err != nil {
+		return err
+	}
+	errGroup := errgroup.Group{}
+	for _idx, _relatedBook := range b.AlsoRead {
+		idx := _idx
+		relatedURL := _relatedBook.URL
+		errGroup.Go(func() error {
+			return c.crawl(ctx, relatedURL, depth+1, idx)
+		})
+	}
+	err = errGroup.Wait()
+	return err
 }
 
 func (c *Crawler) crawlAlsoRead(ctx context.Context, bookURL string, similarBooksURL string, depth int) error {
@@ -182,6 +237,20 @@ func (c *Crawler) crawlAlsoRead(ctx context.Context, bookURL string, similarBook
 	}
 
 	return nil
+}
+
+func (c *Crawler) fetch(ctx context.Context, url string) (*goquery.Document, error) {
+	res, err := c.Client.Request(ctx, "GET", url, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if res.StatusCode/100 != 2 {
+		err := fmt.Errorf("failed to fetch: %s returned status code %d", url, res.StatusCode)
+		return nil, err
+	}
+
+	return goquery.NewDocumentFromReader(res.Body)
 }
 
 func (c *Crawler) extractRelatedBookURLs(ctx context.Context, url string) ([]string, error) {

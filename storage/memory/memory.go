@@ -37,21 +37,22 @@ func (s *Storage) GetBookState(ctx context.Context, url string) (storage.StateCh
 	return s.state[url], nil
 }
 
-func (s *Storage) SetBookState(ctx context.Context, url string, previous storage.State, new storage.State) (bool, error) {
+func (s *Storage) SetBookState(ctx context.Context, url string, previous storage.StateChange, new storage.State) (storage.StateChange, bool, error) {
 	s.stateMutex.Lock()
 	defer s.stateMutex.Unlock()
 
 	// CAS check
-	if s.state[url].State != previous {
-		return false, nil
+	previousSC := s.state[url]
+	if previous.State != previousSC.State || previous.When != previousSC.When {
+		return storage.StateChange{}, false, nil
 	}
 
-	s.state[url] = storage.StateChange{
+	newSC := storage.StateChange{
 		When:  time.Now(),
 		State: new,
 	}
-
-	return true, nil
+	s.state[url] = newSC
+	return newSC, true, nil
 }
 
 func (s *Storage) GetBook(ctx context.Context, url string, _ int) (*book.Book, error) {

@@ -30,7 +30,7 @@ type Storage interface {
 
 	// State manipulation is a CAS operation (Compare And Swap)
 	GetBookState(ctx context.Context, url url) (StateChange, error)
-	SetBookState(ctx context.Context, url url, previous State, new State) (bool, error)
+	SetBookState(ctx context.Context, url url, previous StateChange, new State) (StateChange, bool, error)
 
 	GetBook(ctx context.Context, url url, maxDepth int) (*book.Book, error)
 	SetBook(ctx context.Context, url url, book *book.Book) error
