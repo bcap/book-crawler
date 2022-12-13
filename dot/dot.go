@@ -56,11 +56,11 @@ func PrintBookGraph(graph book.Graph, writer io.Writer) {
 		visited[book] = struct{}{}
 		for idx, relatedBook := range book.AlsoRead {
 			label := fmt.Sprintf("idx:%d", idx)
-			fmt.Fprintf(writer, "%q -> %q [label=%q]\n", bookID(book), bookID(relatedBook), label)
+			fmt.Fprintf(writer, "%q -> %q [label=%q]\n", bookID(book), bookID(relatedBook.To), label)
 		}
 		for _, relatedBook := range book.AlsoRead {
-			if _, v := visited[relatedBook]; !v {
-				genEdges(visited, relatedBook, depth+1)
+			if _, v := visited[relatedBook.To]; !v {
+				genEdges(visited, relatedBook.To, depth+1)
 			}
 		}
 	}

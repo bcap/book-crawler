@@ -23,7 +23,7 @@ func main() {
 		RatingsTotal: 1000,
 		Reviews:      2000,
 		URL:          "http://test1",
-		AlsoRead:     []*book.Book{},
+		AlsoRead:     []book.Edge{},
 	}
 	b2 := book.Book{
 		Title:        "test title 2",
@@ -33,7 +33,7 @@ func main() {
 		RatingsTotal: 3000,
 		Reviews:      4000,
 		URL:          "http://test2",
-		AlsoRead:     []*book.Book{},
+		AlsoRead:     []book.Edge{},
 	}
 	b3 := book.Book{
 		Title:        "test title 3",
@@ -43,7 +43,7 @@ func main() {
 		RatingsTotal: 3000,
 		Reviews:      4000,
 		URL:          "http://test3",
-		AlsoRead:     []*book.Book{},
+		AlsoRead:     []book.Edge{},
 	}
 
 	fmt.Println(spew.Sdump(s.Initialize(ctx)))
@@ -55,8 +55,8 @@ func main() {
 	fmt.Println(spew.Sdump(s.SetBook(ctx, b1.URL, &b1)))
 	fmt.Println(spew.Sdump(s.SetBook(ctx, b2.URL, &b2)))
 	fmt.Println(spew.Sdump(s.SetBook(ctx, b3.URL, &b3)))
-	fmt.Println(spew.Sdump(s.LinkBooks(ctx, b1.URL, b2.URL)))
-	fmt.Println(spew.Sdump(s.LinkBooks(ctx, b2.URL, b3.URL)))
+	fmt.Println(spew.Sdump(s.LinkBook(ctx, b1.URL, b2.URL, 0)))
+	fmt.Println(spew.Sdump(s.LinkBook(ctx, b2.URL, b3.URL, 0)))
 	fmt.Println(spew.Sdump(s.GetBookState(ctx, b1.URL)))
 	fmt.Println(spew.Sdump(s.GetBook(ctx, b2.URL, 3)))
 	fmt.Println(spew.Sdump(s.Shutdown(ctx)))

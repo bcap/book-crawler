@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"sort"
 	"sync"
 	"time"
 
@@ -70,7 +71,7 @@ func (s *Storage) SetBook(ctx context.Context, url string, book *book.Book) erro
 	return nil
 }
 
-func (s *Storage) LinkBooks(ctx context.Context, url string, bookURLs ...string) error {
+func (s *Storage) LinkBook(ctx context.Context, url string, relatedURL string, priority int) error {
 	s.booksMutex.Lock()
 	defer s.booksMutex.Unlock()
 
@@ -79,12 +80,17 @@ func (s *Storage) LinkBooks(ctx context.Context, url string, bookURLs ...string)
 		return fmt.Errorf("cannot link books: %w", storage.ErrBookNotFound{URL: url})
 	}
 
-	for _, url := range bookURLs {
-		related := s.books[url]
-		if related != nil {
-			b.AlsoRead = append(b.AlsoRead, related)
-		}
+	related := s.books[relatedURL]
+	if related == nil {
+		return nil
 	}
+
+	edge := book.Edge{From: b, To: related, Priority: priority}
+	b.AlsoRead = append(b.AlsoRead, edge)
+	lessFn := func(i, j int) bool {
+		return b.AlsoRead[i].Priority < b.AlsoRead[j].Priority
+	}
+	sort.Slice(b.AlsoRead, lessFn)
 
 	return nil
 }

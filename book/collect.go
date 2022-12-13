@@ -11,8 +11,8 @@ func Collect(root *Book) []*Book {
 	recurse = func(book *Book) {
 		bookMap[book] = struct{}{}
 		for _, also := range book.AlsoRead {
-			if _, has := bookMap[also]; !has {
-				recurse(also)
+			if _, has := bookMap[also.To]; !has {
+				recurse(also.To)
 			}
 		}
 	}
@@ -50,7 +50,7 @@ func CollectByDepth(root *Book) [][]*Book {
 			return
 		}
 		for _, relatedBook := range book.AlsoRead {
-			recurse(relatedBook, depth+1)
+			recurse(relatedBook.To, depth+1)
 		}
 	}
 	recurse(root, 0)

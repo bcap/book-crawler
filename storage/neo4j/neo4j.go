@@ -139,14 +139,14 @@ func (s *Storage) GetBook(ctx context.Context, url string, maxDepth int) (*book.
 		var query string
 		if depth < maxDepth {
 			query = "" +
-				"MATCH (p:Person)-[:AUTHORED]->(b1:Book {url: $url})" +
+				"MATCH (p:Person)-[:AUTHORED]->(b1:Book {url: $url}) " +
 				"OPTIONAL MATCH (b1)-[r:ALSO_READ]->(b2:Book) " +
-				"RETURN b1, p, b2.url " +
-				"ORDER BY r.idx "
+				"RETURN p, b1, r.priority, b2.url " +
+				"ORDER BY r.priority ASC "
 		} else {
 			query = "" +
-				"MATCH (p:Person)-[:AUTHORED]->(b1:Book {url: $url})" +
-				"RETURN b1, p"
+				"MATCH (p:Person)-[:AUTHORED]->(b:Book {url: $url}) " +
+				"RETURN p, b "
 		}
 
 		records, err := tx.Run(ctx, query, map[string]any{"url": url})
@@ -156,8 +156,8 @@ func (s *Storage) GetBook(ctx context.Context, url string, maxDepth int) (*book.
 		if !records.Next(ctx) {
 			return nil, nil
 		}
-		bookNode := records.Record().Values[0].(dbtype.Node)
-		personNode := records.Record().Values[1].(dbtype.Node)
+		personNode := records.Record().Values[0].(dbtype.Node)
+		bookNode := records.Record().Values[1].(dbtype.Node)
 		value := func(node *dbtype.Node, key string, defaultValue any) any {
 			if v, has := node.Props[key]; has {
 				return v
@@ -172,12 +172,13 @@ func (s *Storage) GetBook(ctx context.Context, url string, maxDepth int) (*book.
 			URL:          value(&bookNode, "url", "").(string),
 			Author:       value(&personNode, "name", "").(string),
 			AuthorURL:    value(&personNode, "url", "").(string),
-			AlsoRead:     []*book.Book{},
+			AlsoRead:     []book.Edge{},
 		}
 		if depth < maxDepth {
 			for {
-				rURLIntf := records.Record().Values[2]
-				if rURLIntf == nil {
+				priorityIntf := records.Record().Values[2]
+				rURLIntf := records.Record().Values[3]
+				if priorityIntf == nil || rURLIntf == nil {
 					break
 				}
 				r, err := work(tx, rURLIntf.(string), depth+1)
@@ -187,7 +188,8 @@ func (s *Storage) GetBook(ctx context.Context, url string, maxDepth int) (*book.
 				if r == nil {
 					continue
 				}
-				b.AlsoRead = append(b.AlsoRead, r)
+				edge := book.Edge{From: b, To: r, Priority: int(priorityIntf.(int64))}
+				b.AlsoRead = append(b.AlsoRead, edge)
 				if !records.Next(ctx) {
 					break
 				}
@@ -227,17 +229,15 @@ func (s *Storage) SetBook(ctx context.Context, url string, book *book.Book) erro
 	return err
 }
 
-func (s *Storage) LinkBooks(ctx context.Context, url string, bookURLs ...string) error {
+func (s *Storage) LinkBook(ctx context.Context, url string, relatedURL string, priority int) error {
 	work := func(tx managedTransaction) (struct{}, error) {
 		query := "" +
 			"MATCH (b:Book {url: $b_url}), (o:Book {url: $o_url}) " +
-			"MERGE (b)-[r:ALSO_READ {idx: $idx}]->(o) "
-		for idx, relatedURL := range bookURLs {
-			params := map[string]any{"b_url": url, "o_url": relatedURL, "idx": idx}
-			_, err := tx.Run(ctx, query, params)
-			if err != nil {
-				return struct{}{}, err
-			}
+			"MERGE (b)-[r:ALSO_READ {priority: $priority}]->(o) "
+		params := map[string]any{"b_url": url, "o_url": relatedURL, "priority": priority}
+		_, err := tx.Run(ctx, query, params)
+		if err != nil {
+			return struct{}{}, err
 		}
 		return struct{}{}, nil
 	}

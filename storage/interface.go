@@ -34,7 +34,7 @@ type Storage interface {
 
 	GetBook(ctx context.Context, url url, maxDepth int) (*book.Book, error)
 	SetBook(ctx context.Context, url url, book *book.Book) error
-	LinkBooks(ctx context.Context, url url, bookUrls ...url) error
+	LinkBook(ctx context.Context, url url, related url, priority int) error
 }
 
 type ErrBookNotFound struct {

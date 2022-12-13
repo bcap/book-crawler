@@ -199,7 +199,7 @@ func (c *Crawler) handlePreviouslyLinked(ctx context.Context, url string, prevSt
 	errGroup := errgroup.Group{}
 	for _idx, _relatedBook := range b.AlsoRead {
 		idx := _idx
-		relatedURL := _relatedBook.URL
+		relatedURL := _relatedBook.To.URL
 		errGroup.Go(func() error {
 			return c.crawl(ctx, relatedURL, depth+1, idx)
 		})
@@ -225,7 +225,7 @@ func (c *Crawler) crawlAlsoRead(ctx context.Context, bookURL string, similarBook
 			if err != nil {
 				return err
 			}
-			if err := c.Storage.LinkBooks(ctx, bookURL, linkURL); err != nil {
+			if err := c.Storage.LinkBook(ctx, bookURL, linkURL, idx); err != nil {
 				return err
 			}
 			return nil

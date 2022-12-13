@@ -32,12 +32,18 @@ type Book struct {
 
 	URL string
 
-	AlsoRead []*Book
+	AlsoRead []Edge
 }
 
 func New(url string) *Book {
 	return &Book{
 		URL:      url,
-		AlsoRead: make([]*Book, 0),
+		AlsoRead: make([]Edge, 0),
 	}
+}
+
+type Edge struct {
+	From     *Book
+	To       *Book
+	Priority int
 }
