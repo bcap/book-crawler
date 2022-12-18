@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"reflect"
 	"time"
 
 	"github.com/bcap/book-crawler/book"
@@ -83,53 +82,62 @@ func (s *Storage) GetBookState(ctx context.Context, url string) (storage.StateCh
 
 func (s *Storage) SetBookState(ctx context.Context, url string, previous storage.StateChange, new storage.State) (storage.StateChange, bool, error) {
 	work := func(tx managedTransaction) (storage.StateChange, error) {
-		query := "MATCH (b:Book {url: $url}) RETURN id(b)"
-		records, err := tx.Run(ctx, query, map[string]any{"url": url})
+		var query string
+		var params map[string]any
 		when := time.Now().UTC()
-		if err != nil {
-			return storage.StateChange{}, NewErrQuery(query, err)
-		}
-		if !records.Peek(ctx) {
-			query = "CREATE (b:Book {url: $url, crawlState: $state, crawlStateChanged: $when})"
-			params := map[string]any{"url": url, "state": new, "when": when}
-			if _, err := tx.Run(ctx, query, params); err != nil {
-				return storage.StateChange{}, NewErrQuery(query, err)
+		if previous.State == 0 {
+			query = "" +
+				"MERGE (b:Book {url: $url}) " +
+				"WITH b, b.crawlStateChanged as previousWhen, b.crawlState as previousState " +
+				"WHERE (previousState = 0 AND previousWhen = $previousWhen) " +
+				"OR (previousState is null AND previousWhen is null) " +
+				"SET b.crawlState = $newState, b.crawlStateChanged = $newWhen " +
+				"RETURN previousWhen, previousState "
+			params = map[string]any{
+				"url":          url,
+				"previousWhen": previous.When,
+				"newState":     new,
+				"newWhen":      when,
 			}
-			return storage.StateChange{
-				State: new,
-				When:  when,
-			}, nil
+		} else {
+			query = "" +
+				"MERGE (b:Book {url: $url}) " +
+				"WITH b, b.crawlStateChanged as previousWhen, b.crawlState as previousState " +
+				"WHERE previousState = $previousState " +
+				"AND previousWhen = $previousWhen " +
+				"SET b.crawlState = $newState, b.crawlStateChanged = $newWhen " +
+				"RETURN previousWhen, previousState "
+			params = map[string]any{
+				"url":           url,
+				"previousState": previous.State,
+				"previousWhen":  previous.When,
+				"newState":      new,
+				"newWhen":       when,
+			}
 		}
 
-		query = "" +
-			"MATCH (b:Book {url: $url, crawlState: $oldState}) " +
-			"SET b.crawlState = $newState, b.crawlStateChanged = $when " +
-			"RETURN id(b)"
-		params := map[string]any{
-			"url":      url,
-			"oldState": previous.State,
-			"newState": new,
-			"when":     when,
-		}
-		records, err = tx.Run(ctx, query, params)
+		records, err := tx.Run(ctx, query, params)
 		if err != nil {
 			return storage.StateChange{}, NewErrQuery(query, err)
 		}
 
-		if records.Peek(ctx) {
-			return storage.StateChange{
-				State: new,
-				When:  when,
-			}, nil
+		// CAS check failed, not changed
+		if !records.Peek(ctx) {
+			return storage.StateChange{}, nil
 		}
-		return storage.StateChange{}, nil
+
+		// CAS suceeded, changed
+		return storage.StateChange{
+			State: new,
+			When:  when,
+		}, nil
 	}
-	sc, err := execute(ctx, s.driver, true, work)
+	result, err := execute(ctx, s.driver, true, work)
 	if err != nil {
-		return sc, false, err
+		return storage.StateChange{}, false, err
 	}
 	zeroV := storage.StateChange{}
-	return sc, !reflect.DeepEqual(sc, zeroV), nil
+	return result, !result.Equals(zeroV), nil
 }
 
 func (s *Storage) GetBook(ctx context.Context, url string, maxDepth int) (*book.Book, error) {

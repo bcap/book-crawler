@@ -22,6 +22,10 @@ type StateChange struct {
 	State State
 }
 
+func (s StateChange) Equals(o StateChange) bool {
+	return s.State == o.State && s.When.Equal(o.When)
+}
+
 type url = string
 
 type Storage interface {

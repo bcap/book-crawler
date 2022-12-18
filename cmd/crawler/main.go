@@ -106,7 +106,7 @@ func run(cmd *cobra.Command, args []string) {
 		panic(err)
 	}
 
-	rootBook, err := crawler.Storage.GetBook(cmd.Context(), url, maxDepth)
+	rootBook, err := crawler.Storage.GetBook(cmd.Context(), url, 0)
 	if err != nil {
 		panic(err)
 	}
