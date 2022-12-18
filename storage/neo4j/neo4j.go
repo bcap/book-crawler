@@ -141,21 +141,18 @@ func (s *Storage) SetBookState(ctx context.Context, url string, previous storage
 }
 
 func (s *Storage) GetBook(ctx context.Context, url string, maxDepth int) (*book.Book, error) {
-	var work func(tx managedTransaction, url string, depth int) (*book.Book, error)
-	work = func(tx managedTransaction, url string, depth int) (*book.Book, error) {
+	work := func(tx managedTransaction, url string, depth int) (*book.Book, error) {
 		log.Debugf("GetBook(url: %v, depth: %v", url, depth)
-		var query string
-		if depth < maxDepth {
-			query = "" +
-				"MATCH (p:Person)-[:AUTHORED]->(b1:Book {url: $url}) " +
-				"OPTIONAL MATCH (b1)-[r:ALSO_READ]->(b2:Book) " +
-				"RETURN p, b1, r.priority, b2.url " +
-				"ORDER BY r.priority ASC "
-		} else {
-			query = "" +
-				"MATCH (p:Person)-[:AUTHORED]->(b:Book {url: $url}) " +
-				"RETURN p, b "
-		}
+
+		query := fmt.Sprintf(""+
+			"MATCH (b1:Book {url: $url}) "+
+			"MATCH (b2:Book) "+
+			"MATCH (p1:Person)-[:AUTHORED]->(b1) "+
+			"MATCH (p2:Person)-[:AUTHORED]->(b2) "+
+			"MATCH (b1)-[r:ALSO_READ*0..%d]->(b2) "+
+			"RETURN b2, p2, r ",
+			maxDepth,
+		)
 
 		records, err := tx.Run(ctx, query, map[string]any{"url": url})
 		if err != nil {
@@ -164,46 +161,61 @@ func (s *Storage) GetBook(ctx context.Context, url string, maxDepth int) (*book.
 		if !records.Next(ctx) {
 			return nil, nil
 		}
-		personNode := records.Record().Values[0].(dbtype.Node)
-		bookNode := records.Record().Values[1].(dbtype.Node)
+
+		idMap := map[string]*book.Book{}
+
 		value := func(node *dbtype.Node, key string, defaultValue any) any {
 			if v, has := node.Props[key]; has {
 				return v
 			}
 			return defaultValue
 		}
-		b := &book.Book{
-			Title:        value(&bookNode, "title", "").(string),
-			Rating:       float32(value(&bookNode, "rating", 0.0).(float64)),
-			RatingsTotal: int32(value(&bookNode, "ratings", 0).(int64)),
-			Reviews:      int32(value(&bookNode, "reviews", 0).(int64)),
-			URL:          value(&bookNode, "url", "").(string),
-			Author:       value(&personNode, "name", "").(string),
-			AuthorURL:    value(&personNode, "url", "").(string),
-			AlsoRead:     []book.Edge{},
-		}
-		if depth < maxDepth {
-			for {
-				priorityIntf := records.Record().Values[2]
-				rURLIntf := records.Record().Values[3]
-				if priorityIntf == nil || rURLIntf == nil {
-					break
+
+		var rootBook *book.Book
+
+		for {
+			bookNode := records.Record().Values[0].(dbtype.Node)
+			authorNode := records.Record().Values[1].(dbtype.Node)
+			relationships := records.Record().Values[2].([]interface{})
+
+			if _, has := idMap[bookNode.ElementId]; !has {
+				b := &book.Book{
+					Title:        value(&bookNode, "title", "").(string),
+					Rating:       float32(value(&bookNode, "rating", 0.0).(float64)),
+					RatingsTotal: int32(value(&bookNode, "ratings", 0).(int64)),
+					Reviews:      int32(value(&bookNode, "reviews", 0).(int64)),
+					URL:          value(&bookNode, "url", "").(string),
+					Author:       value(&authorNode, "name", "").(string),
+					AuthorURL:    value(&authorNode, "url", "").(string),
+					AlsoRead:     []book.Edge{},
 				}
-				r, err := work(tx, rURLIntf.(string), depth+1)
-				if err != nil {
-					return nil, err
+				idMap[bookNode.ElementId] = b
+			}
+
+			if len(relationships) == 0 {
+				rootBook = idMap[bookNode.ElementId]
+			} else {
+				lastRelationship := relationships[len(relationships)-1].(dbtype.Relationship)
+				from := idMap[lastRelationship.StartElementId]
+				to := idMap[lastRelationship.EndElementId]
+				priority := 0
+				priorityIntf, hasPriority := lastRelationship.Props["priority"]
+				if hasPriority {
+					priority = int(priorityIntf.(int64))
 				}
-				if r == nil {
-					continue
-				}
-				edge := book.Edge{From: b, To: r, Priority: int(priorityIntf.(int64))}
-				b.AlsoRead = append(b.AlsoRead, edge)
-				if !records.Next(ctx) {
-					break
-				}
+				from.AlsoRead = append(from.AlsoRead, book.Edge{
+					From:     from,
+					To:       to,
+					Priority: priority,
+				})
+			}
+
+			if !records.Next(ctx) {
+				break
 			}
 		}
-		return b, nil
+
+		return rootBook, nil
 	}
 	return execute(ctx, s.driver, false, func(tx managedTransaction) (*book.Book, error) {
 		return work(tx, url, 0)

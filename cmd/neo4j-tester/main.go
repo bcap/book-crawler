@@ -59,5 +59,8 @@ func main() {
 	fmt.Println(spew.Sdump(s.LinkBook(ctx, b2.URL, b3.URL, 0)))
 	fmt.Println(spew.Sdump(s.GetBookState(ctx, b1.URL)))
 	fmt.Println(spew.Sdump(s.GetBook(ctx, b2.URL, 3)))
+
+	fmt.Println(s.GetBook(ctx, "https://www.goodreads.com/book/show/61535.The_Selfish_Gene", 2))
+
 	fmt.Println(spew.Sdump(s.Shutdown(ctx)))
 }
