@@ -25,8 +25,8 @@ type Crawler struct {
 
 	minNumRatings int32
 	maxNumRatings int32
-	minRating     float32
-	maxRating     float32
+	minRating     int32
+	maxRating     int32
 
 	maxParallelism int
 
@@ -87,13 +87,13 @@ func WithMaxNumRatings(maxNumRatings int32) CrawlerOption {
 	}
 }
 
-func WithMinRating(minRating float32) CrawlerOption {
+func WithMinRating(minRating int32) CrawlerOption {
 	return func(c *Crawler) {
 		c.minRating = minRating
 	}
 }
 
-func WithMaxRating(maxRating float32) CrawlerOption {
+func WithMaxRating(maxRating int32) CrawlerOption {
 	return func(c *Crawler) {
 		c.maxRating = maxRating
 	}

@@ -20,6 +20,7 @@ const DefaultURL = "neo4j://localhost:7687"
 var initStatements = []string{
 	"CREATE CONSTRAINT IF NOT EXISTS FOR (b:Book) REQUIRE (b.url) IS UNIQUE",
 	"CREATE CONSTRAINT IF NOT EXISTS FOR (p:Person) REQUIRE (p.url) IS UNIQUE",
+	"CREATE CONSTRAINT IF NOT EXISTS FOR (g:Genre) REQUIRE (g.name) IS UNIQUE",
 	"CREATE INDEX IF NOT EXISTS FOR (b:Book) ON (b.title)",
 }
 
@@ -174,19 +175,27 @@ func (s *Storage) GetBook(ctx context.Context, url string, maxDepth int) (*book.
 		var rootBook *book.Book
 
 		for {
-			bookNode := records.Record().Values[0].(dbtype.Node)
-			authorNode := records.Record().Values[1].(dbtype.Node)
-			relationships := records.Record().Values[2].([]interface{})
+			values := records.Record().Values
+			bookNode := values[0].(dbtype.Node)
+			authorNode := values[1].(dbtype.Node)
+			relationships := values[2].([]interface{})
 
 			if _, has := idMap[bookNode.ElementId]; !has {
 				b := &book.Book{
 					Title:        value(&bookNode, "title", "").(string),
-					Rating:       float32(value(&bookNode, "rating", 0.0).(float64)),
-					RatingsTotal: int32(value(&bookNode, "ratings", 0).(int64)),
-					Reviews:      int32(value(&bookNode, "reviews", 0).(int64)),
+					Rating:       int32(value(&bookNode, "rating", int64(0)).(int64)),
+					RatingsTotal: int32(value(&bookNode, "ratings", int64(0)).(int64)),
+					Ratings1:     int32(value(&bookNode, "ratings1", int64(0)).(int64)),
+					Ratings2:     int32(value(&bookNode, "ratings2", int64(0)).(int64)),
+					Ratings3:     int32(value(&bookNode, "ratings3", int64(0)).(int64)),
+					Ratings4:     int32(value(&bookNode, "ratings4", int64(0)).(int64)),
+					Ratings5:     int32(value(&bookNode, "ratings5", int64(0)).(int64)),
+					Reviews:      int32(value(&bookNode, "reviews", int64(0)).(int64)),
+					Pages:        int32(value(&bookNode, "pages", int64(0)).(int64)),
 					URL:          value(&bookNode, "url", "").(string),
 					Author:       value(&authorNode, "name", "").(string),
 					AuthorURL:    value(&authorNode, "url", "").(string),
+					Genres:       []string{},
 					AlsoRead:     []book.Edge{},
 				}
 				idMap[bookNode.ElementId] = b
@@ -226,7 +235,10 @@ func (s *Storage) SetBook(ctx context.Context, url string, book *book.Book) erro
 	work := func(tx managedTransaction) (struct{}, error) {
 		query := "" +
 			"MERGE (b:Book {url: $bookURL}) " +
-			"  SET b.title = $title, b.rating = $rating, b.ratings = $ratings, b.reviews = $reviews " +
+			"  SET b.title = $title, b.rating = $rating, b.ratings = $ratings, " +
+			"  b.ratings1 = $ratings1, b.ratings2 = $ratings2, b.ratings3 = $ratings3, " +
+			"  b.ratings4 = $ratings4, b.ratings5 = $ratings5, b.reviews = $reviews, " +
+			"  b.pages = $pages " +
 			"MERGE (p:Person {url: $personURL}) " +
 			"  SET p.name = $author " +
 			"MERGE (p)-[:AUTHORED]->(b) "
@@ -235,7 +247,13 @@ func (s *Storage) SetBook(ctx context.Context, url string, book *book.Book) erro
 			"author":    book.Author,
 			"rating":    book.Rating,
 			"ratings":   book.RatingsTotal,
+			"ratings1":  book.Ratings1,
+			"ratings2":  book.Ratings2,
+			"ratings3":  book.Ratings3,
+			"ratings4":  book.Ratings4,
+			"ratings5":  book.Ratings5,
 			"reviews":   book.Reviews,
+			"pages":     book.Pages,
 			"bookURL":   book.URL,
 			"personURL": book.AuthorURL,
 		}

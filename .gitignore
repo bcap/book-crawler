@@ -2,6 +2,7 @@
 *.log
 *.dot
 *.svg
+*.html
 
 volumes/
 

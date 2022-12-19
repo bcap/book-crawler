@@ -20,8 +20,8 @@ var maxDepth int
 var maxReadAlso int
 var minNumRatings int32
 var maxNumRatings int32
-var minRating float32
-var maxRating float32
+var minRating int32
+var maxRating int32
 var maxParallelism int
 var maxRequestRetries int
 var minRequestRetryWait time.Duration
@@ -51,8 +51,8 @@ func parser() cobra.Command {
 	cmd.Flags().IntVarP(&maxReadAlso, "max-read-also", "r", 5, "controls how many related books to follow from a given book")
 	cmd.Flags().Int32Var(&minNumRatings, "min-num-ratings", -1, "only persist and follow links for books that have at least this amount of ratings given by users. Set to a negative number to disable this check")
 	cmd.Flags().Int32Var(&maxNumRatings, "max-num-ratings", -1, "only persist and follow links for books that have at most this amount of ratings given by users. Set to a negative number to disable this check")
-	cmd.Flags().Float32Var(&minRating, "min-rating", -1, "only persist and follow links for books that have at least this rating. Set to a negative number to disable this check")
-	cmd.Flags().Float32Var(&maxRating, "max-rating", -1, "only persist and follow links for books that have at most this rating. Set to a negative number to disable this check")
+	cmd.Flags().Int32Var(&minRating, "min-rating", -1, "only persist and follow links for books that have at least this rating. Set to a negative number to disable this check")
+	cmd.Flags().Int32Var(&maxRating, "max-rating", -1, "only persist and follow links for books that have at most this rating. Set to a negative number to disable this check")
 	cmd.Flags().IntVarP(&maxParallelism, "parallelism", "p", 10, "controls how requests are alowed in parallel")
 	cmd.Flags().IntVar(&maxRequestRetries, "max-retries", 4, "controls how many times the crawler will retry for a given URL")
 	cmd.Flags().DurationVar(&minRequestRetryWait, "min-retry-wait", 1*time.Second, "minimum time to wait in between retries")
@@ -78,6 +78,7 @@ func run(cmd *cobra.Command, args []string) {
 		crawler.WithMaxReadAlso(maxReadAlso),
 		crawler.WithMinNumRatings(minNumRatings),
 		crawler.WithMinRating(minRating),
+		crawler.WithMinRating(maxRating),
 		crawler.WithMaxParallelism(maxParallelism),
 		crawler.WithRequestMaxRetries(maxRequestRetries),
 		crawler.WithRequestMinRetryWait(minRequestRetryWait),

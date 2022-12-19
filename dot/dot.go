@@ -18,7 +18,7 @@ func PrintBookGraph(graph book.Graph, writer io.Writer) {
 		for depth, books := range graph.ByDepth {
 			for _, book := range books {
 				label := fmt.Sprintf(
-					"%s\\l%s\\l%0.1f (%d ratings)\\l%d reviews\\ldepth:%d\\l",
+					"%s\\l%s\\l%d (%d ratings)\\l%d reviews\\ldepth:%d\\l",
 					book.Title,
 					book.Author,
 					book.Rating,

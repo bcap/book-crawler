@@ -20,7 +20,7 @@ type Book struct {
 	Author    string
 	AuthorURL string
 
-	Rating       float32
+	Rating       int32
 	RatingsTotal int32
 	Ratings1     int32
 	Ratings2     int32
@@ -30,6 +30,10 @@ type Book struct {
 
 	Reviews int32
 
+	Pages int32
+
+	Genres []string
+
 	URL string
 
 	AlsoRead []Edge
@@ -38,6 +42,7 @@ type Book struct {
 func New(url string) *Book {
 	return &Book{
 		URL:      url,
+		Genres:   make([]string, 0),
 		AlsoRead: make([]Edge, 0),
 	}
 }
